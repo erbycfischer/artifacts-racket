@@ -1,0 +1,11 @@
+; Engine configuration file.
+; Best edited with Godot, but kept small for the initial scaffold.
+
+config_version=5
+
+[application]
+config/name="Artifacts 3D Visualizer"
+run/main_scene="res://scenes/Main.tscn"
+
+[rendering]
+renderer/rendering_method="gl_compatibility"
