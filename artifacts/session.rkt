@@ -554,7 +554,7 @@
          (session-publish-snapshot!)
          (session-publish-logs!))]
       [else
-       (printf "Visualizer ignored unknown command type: ~a\n" type)
+       (printf "3D bridge ignored unknown command type: ~a\n" type)
        (flush-output)])))
 
 (define (poll-loop interval-seconds)
