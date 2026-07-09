@@ -68,6 +68,8 @@
          action-bank-withdraw-item
          action-bank-withdraw-gold
          action-bank-buy-expansion
+         action-npc-buy
+         action-npc-sell
          action-grand-exchange-buy
          action-grand-exchange-create-sell-order
          action-grand-exchange-create-buy-order
@@ -96,7 +98,7 @@
 
 (define (present-token? token)
   (and (string? token)
-       (not (string-blank? token))))
+       (regexp-match? #px"\\S" token)))
 
 (define (compact-params params)
   (filter values params))
@@ -109,7 +111,7 @@
     (and (pair? params)
          (alist->form-urlencoded
           (for/list ([item (compact-params params)])
-            (cons (symbol->string (car item)) (->query-value (cdr item)))))))
+            (cons (car item) (->query-value (cdr item)))))))
   (string->url
    (string-append (string-trim (artifacts-config-base-url config) "/" #:right? #t)
                   path
@@ -391,6 +393,12 @@
 
 (define (action-bank-buy-expansion name #:config [config (current-config)])
   (character-action name "bank/buy_expansion" #:config config))
+
+(define (action-npc-buy name item #:config [config (current-config)])
+  (character-action name "npc/buy" #:body item #:config config))
+
+(define (action-npc-sell name item #:config [config (current-config)])
+  (character-action name "npc/sell" #:body item #:config config))
 
 (define (action-grand-exchange-buy name order #:config [config (current-config)])
   (character-action name "grandexchange/buy" #:body order #:config config))

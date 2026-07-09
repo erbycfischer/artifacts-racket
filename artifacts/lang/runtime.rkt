@@ -1,6 +1,6 @@
 #lang racket
 
-(require artifacts/core)
+(require "../core.rkt")
 
 (provide (rename-out [artifacts-module-begin #%module-begin])
          #%app
@@ -20,7 +20,7 @@
          (struct-out strategy-spec)
          (struct-out goal-spec)
          (struct-out action-spec)
-         (all-from-out artifacts/core))
+         (all-from-out "../core.rkt"))
 
 (struct bot-spec (name forms) #:transparent)
 (struct character-spec (name role forms) #:transparent)
@@ -44,6 +44,8 @@
     bank-withdraw-item
     bank-withdraw-gold
     bank-buy-expansion
+    npc-buy
+    npc-sell
     grand-exchange-orders
     grand-exchange-buy
     grand-exchange-create-sell-order
@@ -151,6 +153,8 @@
     [(bank-withdraw-item) (action-bank-withdraw-item character-name (first-payload spec '()) #:config config)]
     [(bank-withdraw-gold) (action-bank-withdraw-gold character-name (first-payload spec 0) #:config config)]
     [(bank-buy-expansion) (action-bank-buy-expansion character-name #:config config)]
+    [(npc-buy) (action-npc-buy character-name (first-payload spec) #:config config)]
+    [(npc-sell) (action-npc-sell character-name (first-payload spec) #:config config)]
     [(grand-exchange-buy) (action-grand-exchange-buy character-name (first-payload spec) #:config config)]
     [(grand-exchange-create-sell-order) (action-grand-exchange-create-sell-order character-name (first-payload spec) #:config config)]
     [(grand-exchange-create-buy-order) (action-grand-exchange-create-buy-order character-name (first-payload spec) #:config config)]

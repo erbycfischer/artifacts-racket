@@ -11,7 +11,7 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - Grand Exchange reads and account order/history reads.
 - Events, active events, raids, raid details, and raid leaderboard.
 - Fight simulation wrapper.
-- Character actions: movement, transition, rest, equip/unequip, use, fight, gather, craft, recycle, bank, Grand Exchange, tasks, give, claim, delete, and skin change.
+- Character actions: movement, transition, rest, equip/unequip, use, fight, gather, craft, recycle, bank, NPC buy/sell, Grand Exchange, tasks, give, claim, delete, and skin change.
 
 ## Module Map
 
