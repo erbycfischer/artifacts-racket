@@ -76,4 +76,4 @@ godot --path godot/client
 
 ## Encyclopedia cache
 
-`load-encyclopedia` caches monsters/resources/items under `ARTIFACTS_CACHE_DIR` (default: system temp `artifacts-racket-cache`) for `ARTIFACTS_ENCYCLOPEDIA_CACHE_SECONDS` (default 900). Bots stay headless; this only cuts repeat API fan-out.
+`load-encyclopedia` and `load-world-index` cache under `ARTIFACTS_CACHE_DIR` (default: system temp `artifacts-racket-cache`). TTL defaults: `ARTIFACTS_ENCYCLOPEDIA_CACHE_SECONDS` and `ARTIFACTS_WORLD_CACHE_SECONDS` (both 900). Bots stay headless; this only cuts repeat API fan-out.

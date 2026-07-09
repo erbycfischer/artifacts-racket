@@ -17,6 +17,7 @@
          world-snapshot-message
          bot-decision-message
          market-signal-message
+         select-maps-for-visualizer
          summarize-maps-for-visualizer)
 
 (define default-port 8787)
@@ -84,21 +85,83 @@
       [else data]))
   (make-protocol-message "market.signal" with-pos))
 
-(define (summarize-maps-for-visualizer maps #:limit [limit 400])
-  (define items (if (list? maps) maps '()))
-  (for/list ([m items]
-             [i (in-range limit)]
-             #:when (hash? m))
-    (define interactions (hash-ref m 'interactions #f))
-    (define content (and (hash? interactions) (hash-ref interactions 'content #f)))
-    (hasheq 'map_id (hash-ref m 'map_id #f)
-            'layer (hash-ref m 'layer "overworld")
-            'x (hash-ref m 'x 0)
-            'y (hash-ref m 'y 0)
-            'skin (hash-ref m 'skin "forest")
-            'content_type (if (hash? content) (hash-ref content 'type "terrain") "terrain")
-            'content_code (if (hash? content) (hash-ref content 'code "") "")
-            'interactions (if interactions interactions #hasheq()))))
+(define interesting-content-types
+  '("monster" "resource" "bank" "grand_exchange" "workshop" "tasks_master" "npc"))
+
+(define (map-content-hash m)
+  (define interactions (hash-ref m 'interactions #f))
+  (and (hash? interactions) (hash-ref interactions 'content #f)))
+
+(define (map-has-interesting-content? m)
+  (define content (map-content-hash m))
+  (and (hash? content)
+       (member (hash-ref content 'type #f) interesting-content-types)))
+
+(define (point-layer p)
+  (if (hash? p) (hash-ref p 'layer "overworld") "overworld"))
+
+(define (point-xy p)
+  (values (if (hash? p) (hash-ref p 'x 0) 0)
+          (if (hash? p) (hash-ref p 'y 0) 0)))
+
+(define (near-any-focus? m focuses #:radius [radius 12])
+  (define layer (hash-ref m 'layer "overworld"))
+  (define mx (hash-ref m 'x 0))
+  (define my (hash-ref m 'y 0))
+  (for/or ([p focuses] #:when (hash? p))
+    (and (equal? layer (point-layer p))
+         (let-values ([(px py) (point-xy p)])
+           (<= (+ (abs (- mx px)) (abs (- my py))) radius)))))
+
+(define (map-visual-priority m focuses)
+  (define content (map-content-hash m))
+  (define type (and (hash? content) (hash-ref content 'type #f)))
+  (+ (if (near-any-focus? m focuses) 1000 0)
+     (cond
+       [(equal? type "grand_exchange") 80]
+       [(equal? type "bank") 70]
+       [(equal? type "monster") 60]
+       [(equal? type "resource") 50]
+       [(member type interesting-content-types) 40]
+       [else 0])))
+
+(define (summarize-one-map m)
+  (define interactions (hash-ref m 'interactions #f))
+  (define content (and (hash? interactions) (hash-ref interactions 'content #f)))
+  (hasheq 'map_id (hash-ref m 'map_id #f)
+          'layer (hash-ref m 'layer "overworld")
+          'x (hash-ref m 'x 0)
+          'y (hash-ref m 'y 0)
+          'skin (hash-ref m 'skin "forest")
+          'content_type (if (hash? content) (hash-ref content 'type "terrain") "terrain")
+          'content_code (if (hash? content) (hash-ref content 'code "") "")
+          'interactions (if interactions interactions #hasheq())))
+
+;; Prefer tiles near characters/events/routes and tiles with gameplay content.
+(define (select-maps-for-visualizer maps
+                                    #:focuses [focuses '()]
+                                    #:limit [limit 400])
+  (define items (filter hash? (if (list? maps) maps '())))
+  (define ranked
+    (sort items >
+          #:key (lambda (m) (map-visual-priority m focuses))))
+  (define selected
+    (cond
+      [(null? focuses)
+       ;; No focus: keep interesting content first, then fill.
+       (define interesting (filter map-has-interesting-content? ranked))
+       (define rest (filter (lambda (m) (not (map-has-interesting-content? m))) ranked))
+       (append interesting rest)]
+      [else ranked]))
+  (if (> (length selected) limit)
+      (take selected limit)
+      selected))
+
+(define (summarize-maps-for-visualizer maps
+                                       #:focuses [focuses '()]
+                                       #:limit [limit 400])
+  (map summarize-one-map
+       (select-maps-for-visualizer maps #:focuses focuses #:limit limit)))
 
 (define (with-clients thunk)
   (call-with-semaphore clients-sema thunk))

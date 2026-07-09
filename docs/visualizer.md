@@ -27,7 +27,7 @@ Dry-run publishes sample `market.signal` data every tick so overlays work withou
 
 ## Protocol
 
-- `world.snapshot` with `maps`, `characters`, `routes`, `events`, `raids`
+- `world.snapshot` with `maps` (focus-ranked near characters/routes/events + content tiles), `characters`, `routes`, `events`, `raids`
 - `bot.decision` with `character`, `action`, `reason`
 - `market.signal` with `code`, `spread`, `score`, and `x`/`y`/`layer` anchored to the nearest `grand_exchange` tile when the world index is available
 

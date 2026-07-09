@@ -46,9 +46,40 @@
        next]
       [else (loop (add1 page) next)])))
 
-(define (load-world-index #:config [config (current-config)])
-  (build-world-index
-   (fetch-all-pages get-maps #:config config #:size 100)))
+(define world-cache-seconds
+  (let ([v (getenv "ARTIFACTS_WORLD_CACHE_SECONDS")])
+    (or (and v (string->number v)) 900)))
+
+(define (world-cache-path)
+  (define root (or (getenv "ARTIFACTS_CACHE_DIR")
+                   (build-path (find-system-path 'temp-dir) "artifacts-racket-cache")))
+  (make-directory* root)
+  (build-path root "world-maps.json"))
+
+(define (read-world-cache)
+  (define path (world-cache-path))
+  (and (file-exists? path)
+       (< (- (current-seconds) (file-or-directory-modify-seconds path))
+          world-cache-seconds)
+       (with-handlers ([exn:fail? (lambda (_exn) #f)])
+         (define data (call-with-input-file path read-json))
+         (and (list? data) (pair? data) data))))
+
+(define (write-world-cache! maps)
+  (with-handlers ([exn:fail? (lambda (_exn) (void))])
+    (call-with-output-file (world-cache-path)
+      (lambda (out) (write-json maps out))
+      #:exists 'replace)))
+
+(define (load-world-index #:config [config (current-config)]
+                          #:use-cache? [use-cache? #t])
+  (define maps
+    (or (and use-cache? (read-world-cache))
+        (let ([fresh (fetch-all-pages get-maps #:config config #:size 100)])
+          (when use-cache?
+            (write-world-cache! fresh))
+          fresh)))
+  (build-world-index maps))
 
 (define encyclopedia-cache-seconds
   (let ([v (getenv "ARTIFACTS_ENCYCLOPEDIA_CACHE_SECONDS")])
@@ -346,10 +377,30 @@
                              (hash-ref signal 'score)
                              anchor)))]))
 
+(define (snapshot-focus-points characters events routes)
+  (define from-chars
+    (for/list ([c characters] #:when (hash? c))
+      (hasheq 'layer (hash-ref c 'layer "overworld")
+              'x (hash-ref c 'x 0)
+              'y (hash-ref c 'y 0))))
+  (define from-events
+    (for/list ([e events] #:when (hash? e))
+      (hasheq 'layer (hash-ref e 'layer "overworld")
+              'x (hash-ref e 'x 0)
+              'y (hash-ref e 'y 0))))
+  (define from-routes
+    (apply append
+           (for/list ([r routes] #:when (hash? r))
+             (define pts (hash-ref r 'points '()))
+             (if (list? pts) pts '()))))
+  (append from-chars from-events from-routes))
+
 (define (publish-world-snapshot! world characters events #:routes [routes '()])
+  (define focuses (snapshot-focus-points characters events routes))
   (visualizer-publish!
    (world-snapshot-message
-    #:maps (summarize-maps-for-visualizer (world-index-maps world))
+    #:maps (summarize-maps-for-visualizer (world-index-maps world)
+                                         #:focuses focuses)
     #:characters (map character-visual-record characters)
     #:routes routes
     #:events (for/list ([e events] #:when (hash? e))

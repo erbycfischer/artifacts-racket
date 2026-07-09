@@ -263,4 +263,35 @@
     (delete-directory/files dir))
 
 
+  (test-case "select-maps-for-visualizer prefers focus and content"
+    (define maps
+      (list #hasheq((map_id . 1) (layer . "overworld") (x . 0) (y . 0) (skin . "forest")
+                    (interactions . #hasheq()))
+            #hasheq((map_id . 2) (layer . "overworld") (x . 50) (y . 50) (skin . "forest")
+                    (interactions . #hasheq((content . #hasheq((type . "monster") (code . "chicken"))))))
+            #hasheq((map_id . 3) (layer . "overworld") (x . 1) (y . 1) (skin . "forest")
+                    (interactions . #hasheq()))))
+    (define focused
+      (select-maps-for-visualizer maps
+                                  #:focuses (list #hasheq((layer . "overworld") (x . 0) (y . 0)))
+                                  #:limit 2))
+    (check-equal? (length focused) 2)
+    (check-equal? (hash-ref (car focused) 'map_id) 1)
+    (define no-focus (select-maps-for-visualizer maps #:limit 1))
+    (check-equal? (hash-ref (car no-focus) 'map_id) 2))
+
+  (test-case "world cache round-trip"
+    (define dir (make-temporary-file "artifacts-world-cache-~a" 'directory))
+    (putenv "ARTIFACTS_CACHE_DIR" (path->string dir))
+    (putenv "ARTIFACTS_WORLD_CACHE_SECONDS" "3600")
+    (define sample
+      (list #hasheq((map_id . 1) (layer . "overworld") (x . 0) (y . 0))))
+    (define path (build-path dir "world-maps.json"))
+    (call-with-output-file path (lambda (out) (write-json sample out)) #:exists 'replace)
+    (define world (load-world-index #:config missing-token-config #:use-cache? #t))
+    (check-equal? (length (world-index-maps world)) 1)
+    (check-equal? (hash-ref (car (world-index-maps world)) 'map_id) 1)
+    (delete-directory/files dir))
+
+
 )
