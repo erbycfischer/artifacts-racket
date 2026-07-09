@@ -3,7 +3,7 @@
 ;; Standalone visualizer hub: no bot required.
 ;; Godot connects to ws://127.0.0.1:8787 for watch + manual play.
 ;;
-;;   export ARTIFACTS_TOKEN=...   # optional; can also auth from Godot UI
+;;   export ARTIFACTS_API_TOKEN=...  # or ARTIFACTS_TOKEN; optional Godot auth
 ;;   racket examples/visualizer-hub.rkt
 ;;   godot --path godot/client
 
@@ -27,7 +27,7 @@
 (start-session-service! #:config (current-config) #:poll-seconds poll)
 
 (printf "Visualizer hub ready. Open Godot with: godot --path godot/client\n")
-(printf "Auth via ARTIFACTS_TOKEN or Godot session.auth panel.\n")
+(printf "Auth via ARTIFACTS_API_TOKEN/ARTIFACTS_TOKEN or Godot session.auth panel.\n")
 (flush-output)
 
 ;; Keep process alive until interrupted.

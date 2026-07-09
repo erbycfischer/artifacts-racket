@@ -24,9 +24,14 @@
                     "wss://realtime.beta.artifactsmmo.com"
                     #f))
 
+(define (env-token)
+  ;; Prefer ARTIFACTS_API_TOKEN (GitHub Actions secret name); keep ARTIFACTS_TOKEN for local use.
+  (or (getenv "ARTIFACTS_API_TOKEN")
+      (getenv "ARTIFACTS_TOKEN")))
+
 (define (make-config #:base-url [base-url (artifacts-config-base-url production-config)]
                      #:realtime-url [realtime-url (artifacts-config-realtime-url production-config)]
-                     #:token [token (getenv "ARTIFACTS_TOKEN")])
+                     #:token [token (env-token)])
   (artifacts-config base-url realtime-url token))
 
 (define current-config

@@ -8,7 +8,7 @@ Bots never require Godot (`ARTIFACTS_VISUALIZER=0` keeps them headless).
 ### 1. Hub only (watch account / manual play)
 
 ```sh
-export ARTIFACTS_TOKEN=your_token_here   # optional; can also auth from Godot
+export ARTIFACTS_API_TOKEN=your_token_here   # or ARTIFACTS_TOKEN; optional Godot auth
 racket examples/visualizer-hub.rkt
 # other terminal:
 godot --path godot/client

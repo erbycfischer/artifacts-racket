@@ -2,7 +2,7 @@
 
 ;; Competitive multi-character bot.
 ;; Roles are bound to your live account characters in order.
-;; Set ARTIFACTS_TOKEN, then:
+;; Set ARTIFACTS_API_TOKEN (or ARTIFACTS_TOKEN), then:
 ;;   racket examples/apex-bot.rkt
 ;; Optional dry run:
 ;;   ARTIFACTS_DRY_RUN=1 racket examples/apex-bot.rkt

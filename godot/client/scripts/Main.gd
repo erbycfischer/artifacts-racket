@@ -50,6 +50,9 @@ func _connect_signals() -> void:
 	visual_state.action_result_received.connect(_on_action_result)
 	visual_state.account_logs_received.connect(_on_account_logs)
 	visual_state.selection_changed.connect(ui_root.set_selected_tile)
+	visual_state.selection_changed.connect(func(tile: Dictionary) -> void:
+		map_renderer.call("set_selected_tile", tile)
+	)
 	visual_state.selected_character_changed.connect(_on_character_selected)
 	map_renderer.tile_selected.connect(visual_state.select_tile)
 	ui_root.overlay_changed.connect(_on_overlay_changed)
@@ -236,7 +239,7 @@ func _follow_selected_character() -> void:
 	var character: Dictionary = visual_state.call("find_character", character_name)
 	if character.is_empty():
 		return
-	var tile_size := float(map_renderer.get("tile_size"))
+	var tile_size: float = map_renderer.get("tile_size")
 	var world_pos := Vector3(
 		float(character.get("x", 0)) * tile_size,
 		0.0,

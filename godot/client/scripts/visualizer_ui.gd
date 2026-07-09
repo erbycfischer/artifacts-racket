@@ -393,7 +393,7 @@ func _build_ui() -> void:
 
 	_labels_toggle = CheckButton.new()
 	_labels_toggle.text = "Show tile labels"
-	_labels_toggle.button_pressed = true
+	_labels_toggle.button_pressed = false
 	_labels_toggle.toggled.connect(func(enabled: bool) -> void: overlay_changed.emit("labels", enabled))
 	column.add_child(_labels_toggle)
 

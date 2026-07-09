@@ -23,6 +23,7 @@
          execute-planned-action
          route-for-plan
          ge-anchor-point
+         fetch-world-others
          cooldown-jobs-from-characters
          suggested-loop-sleep
          run-bot-once
@@ -214,7 +215,7 @@
                           [else (raise exn)]))])
        (character-data (get-my-characters #:config config)))]
     [dry-run?
-     (printf "No ARTIFACTS_TOKEN; dry-run using synthetic characters.\n")
+     (printf "No ARTIFACTS_API_TOKEN/ARTIFACTS_TOKEN; dry-run using synthetic characters.\n")
      (flush-output)
      (synthetic-account bot)]
     [else
@@ -410,13 +411,48 @@
              (if (list? pts) pts '()))))
   (append from-chars from-events from-routes))
 
+
+(define (fetch-world-others #:config [config (current-config)]
+                            #:limit [limit 12]
+                            #:exclude [exclude '()])
+  (with-handlers ([exn:fail? (lambda (_exn) '())])
+    (define response (get-character-leaderboard #:size (min limit 100) #:config config))
+    (define entries (let ([data (response-data response)]) (if (list? data) data '())))
+    (define exclude-set
+      (for/hash ([n exclude] #:when n)
+        (values (string-downcase (format "~a" n)) #t)))
+    (define names
+      (for/list ([e entries]
+                 #:when (and (hash? e) (hash-ref e 'name #f))
+                 #:unless (hash-has-key? exclude-set (string-downcase (format "~a" (hash-ref e 'name)))))
+        (hash-ref e 'name)))
+    (define limited (if (> (length names) limit) (take names limit) names))
+    (filter values
+            (for/list ([name limited])
+              (with-handlers ([exn:fail? (lambda (_exn) #f)])
+                (define char (response-data (get-character name #:config config)))
+                (and (hash? char)
+                     (hasheq 'name name
+                             'layer (hash-ref char 'layer "overworld")
+                             'x (hash-ref char 'x 0)
+                             'y (hash-ref char 'y 0)
+                             'map_id (hash-ref char 'map_id #f)
+                             'level (hash-ref char 'level 1)
+                             'skin (hash-ref char 'skin "")
+                             'other #t
+                             'cooldown (hash-ref char 'cooldown 0)
+                             'on_cooldown #f)))))))
+
 (define (publish-world-snapshot! world characters events #:routes [routes '()])
   (define focuses (snapshot-focus-points characters events routes))
   (visualizer-publish!
    (world-snapshot-message
     #:maps (summarize-maps-for-visualizer (world-index-maps world)
                                          #:focuses focuses)
-    #:characters (map character-visual-record characters)
+    #:characters (append (map character-visual-record characters)
+                       (fetch-world-others #:limit 12
+                       #:exclude (for/list ([c characters] #:when (hash? c))
+                                  (hash-ref c 'name #f))))
     #:routes routes
     #:events (for/list ([e events] #:when (hash? e))
                (hasheq 'code (hash-ref e 'code (hash-ref e 'name "event"))

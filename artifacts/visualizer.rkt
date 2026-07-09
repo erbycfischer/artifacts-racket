@@ -180,7 +180,7 @@
           'layer (hash-ref m 'layer "overworld")
           'x (hash-ref m 'x 0)
           'y (hash-ref m 'y 0)
-          'skin (hash-ref m 'skin "forest")
+          'skin (hash-ref m 'skin "forest_1")
           'content_type (if (hash? content) (hash-ref content 'type "terrain") "terrain")
           'content_code (if (hash? content) (hash-ref content 'code "") "")
           'interactions (if interactions interactions #hasheq())))

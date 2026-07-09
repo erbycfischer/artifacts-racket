@@ -21,7 +21,7 @@ TypeScript is not part of the initial stack. It can be added later only if we de
 
 - Racket 8.x for the bot framework.
 - Godot 4.x for the visual client.
-- An Artifacts MMO token in `ARTIFACTS_TOKEN` for authenticated actions.
+- An Artifacts MMO token in `ARTIFACTS_API_TOKEN` or `ARTIFACTS_TOKEN` for authenticated actions.
 
 ## First Commands
 
@@ -40,7 +40,7 @@ export PLTCOLLECTS="$PWD:"
 Play with the competitive `#lang artifacts` bot:
 
 ```sh
-export ARTIFACTS_TOKEN=your_token_here
+export ARTIFACTS_API_TOKEN=your_token_here   # or ARTIFACTS_TOKEN
 racket examples/apex-bot.rkt
 ```
 
@@ -73,7 +73,7 @@ racket examples/visualizer-hub.rkt
 godot --path godot/client
 ```
 
-Auth with `ARTIFACTS_TOKEN` or the Godot Auth panel, then play Move/Fight/Gather/Rest from the UI.
+Auth with `ARTIFACTS_API_TOKEN` / `ARTIFACTS_TOKEN` or the Godot Auth panel, then play Move/Fight/Gather/Rest from the UI.
 
 Open the visual client (optional watcher):
 

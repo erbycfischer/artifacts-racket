@@ -4,6 +4,7 @@
 ;; Owns auth, polling, and player action dispatch. Bots never require this module.
 
 (require json
+         racket/set
          racket/string
          "config.rkt"
          "http.rkt"
@@ -110,7 +111,7 @@
              'inventory (inventory-summary char)))
 
 (define (load-world-index* #:config [config (current-config)])
-  ((dynamic-require "runner.rkt" 'load-world-index) #:config config))
+  ((dynamic-require "artifacts/runner.rkt" 'load-world-index) #:config config))
 
 (define (character-status-record char)
   (hasheq 'name (character-field char 'name)
@@ -164,6 +165,48 @@
     [(list? data) data]
     [(hash? data) (list data)]
     [else '()]))
+
+
+(define (leaderboard-name entry)
+  (and (hash? entry)
+       (or (hash-ref entry 'name #f)
+           (hash-ref entry 'character #f))))
+
+(define (other-character-visual name char)
+  (and (hash? char)
+       (hasheq 'name name
+               'layer (hash-ref char 'layer "overworld")
+               'x (hash-ref char 'x 0)
+               'y (hash-ref char 'y 0)
+               'map_id (hash-ref char 'map_id #f)
+               'hp (hash-ref char 'hp #f)
+               'max_hp (hash-ref char 'max_hp #f)
+               'level (hash-ref char 'level 1)
+               'skin (hash-ref char 'skin "")
+               'other #t
+               'cooldown (hash-ref char 'cooldown 0)
+               'on_cooldown (let ([cd (hash-ref char 'cooldown 0)])
+                              (and (number? cd) (> cd 0))))))
+
+(define (fetch-other-characters #:config [config (current-config)]
+                                #:limit [limit 40]
+                                #:exclude [exclude '()])
+  (with-handlers ([exn:fail? (lambda (_exn) '())])
+    (define response (get-character-leaderboard #:size (min limit 100) #:config config))
+    (define entries (as-list (response-data response)))
+    (define exclude-set (list->set (map (lambda (n) (string-downcase (format "~a" n))) exclude)))
+    (define names
+      (for/list ([e entries]
+                 #:when (leaderboard-name e)
+                 #:unless (set-member? exclude-set
+                                      (string-downcase (format "~a" (leaderboard-name e)))))
+        (leaderboard-name e)))
+    (define limited (if (> (length names) limit) (take names limit) names))
+    (filter values
+            (for/list ([name limited])
+              (with-handlers ([exn:fail? (lambda (_exn) #f)])
+                (define char (response-data (get-character name #:config config)))
+                (other-character-visual name char))))))
 
 (define (raid-visual-record raid)
   (and (hash? raid)
@@ -241,11 +284,18 @@
                  'x (hash-ref e 'x 0)
                  'y (hash-ref e 'y 0)))))
     (define routes (bot-route-overlay))
+    (define mine-names
+      (for/list ([c chars] #:when (hash? c))
+        (hash-ref c 'name #f)))
+    (define others
+      (fetch-other-characters #:config config
+                              #:limit 12
+                              #:exclude (filter values mine-names)))
     (visualizer-publish!
      (world-snapshot-message
       #:maps (summarize-maps-for-visualizer (world-index-maps session-world)
                                            #:focuses focuses)
-      #:characters (map enrich-character-visual chars)
+      #:characters (append (map enrich-character-visual chars) others)
       #:routes (if (list? routes) routes '())
       #:events (filter values (map event-visual-record events))
       #:raids raids))))
