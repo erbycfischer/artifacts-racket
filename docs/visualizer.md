@@ -47,3 +47,7 @@ Dry-run publishes sample `market.signal` data every tick so overlays work withou
 ## Offline vs live
 
 Godot boots from fixtures and shows `Mode: Offline`. When the hub connects it switches to `Connected`, then `Live` after the first protocol message. If the hub drops, mode becomes `Reconnecting` while the last live overlays stay on screen.
+
+## Cooldown rings
+
+Character markers show a blue torus when `cooldown` / `on_cooldown` is set on the snapshot character record. Decision pulses remain magenta and sit above the cooldown ring.

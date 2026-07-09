@@ -77,3 +77,7 @@ godot --path godot/client
 ## Encyclopedia cache
 
 `load-encyclopedia` and `load-world-index` cache under `ARTIFACTS_CACHE_DIR` (default: system temp `artifacts-racket-cache`). TTL defaults: `ARTIFACTS_ENCYCLOPEDIA_CACHE_SECONDS` and `ARTIFACTS_WORLD_CACHE_SECONDS` (both 900). Bots stay headless; this only cuts repeat API fan-out.
+
+## Cooldown-aware loop
+
+`run-bot-loop` sleeps longer when characters are on cooldown (clamped 1–15s), instead of always using the fixed `sleep-seconds` interval. Visualizer publishes still happen each tick; Godot remains optional.

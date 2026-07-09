@@ -13,8 +13,8 @@
       {"map_id": "event_2_1", "layer": "overworld", "x": 2, "y": 1, "skin": "forest", "content_type": "event", "content_code": "strange_apparition"}
     ],
     "characters": [
-      {"name": "miner", "layer": "overworld", "x": 1, "y": 0},
-      {"name": "fighter", "layer": "overworld", "x": 1, "y": 1}
+      {"name": "miner", "layer": "overworld", "x": 1, "y": 0, "cooldown": 0, "on_cooldown": false},
+      {"name": "fighter", "layer": "overworld", "x": 1, "y": 1, "cooldown": 8, "on_cooldown": true}
     ],
     "routes": [
       {

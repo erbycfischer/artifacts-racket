@@ -294,4 +294,30 @@
     (delete-directory/files dir))
 
 
+  (test-case "suggested-wait-seconds clamps to bounds"
+    (define jobs
+      (list (make-job #:character 'a #:action 'wait #:ready-at 100 #:priority 0)
+            (make-job #:character 'b #:action 'wait #:ready-at 5 #:priority 0)))
+    (check-equal? (soonest-ready-at jobs 0) 5)
+    (check-equal? (suggested-wait-seconds jobs #:now 0 #:min-seconds 1 #:max-seconds 15 #:default-seconds 2)
+                  5)
+    (check-equal? (suggested-wait-seconds jobs #:now 0 #:min-seconds 1 #:max-seconds 3 #:default-seconds 2)
+                  3)
+    (check-equal? (suggested-wait-seconds '() #:now 0 #:default-seconds 2) 2))
+
+  (test-case "cooldown-remaining reads cooldown field"
+    (check-equal? (cooldown-remaining #hasheq((cooldown . 0))) 0)
+    (check-true (> (cooldown-remaining #hasheq((cooldown . 8))) 0))
+    (check-true (cooldown-ready? #hasheq((cooldown . 0))))
+    (check-false (cooldown-ready? #hasheq((cooldown . 3)))))
+
+  (test-case "suggested-loop-sleep respects cooling characters"
+    (define chars
+      (list #hasheq((name . "a") (cooldown . 0))
+            #hasheq((name . "b") (cooldown . 9))))
+    (define wait (suggested-loop-sleep chars #:base-seconds 2 #:min-seconds 1 #:max-seconds 15))
+    (check-true (>= wait 2))
+    (check-true (<= wait 15)))
+
+
 )

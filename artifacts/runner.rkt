@@ -8,6 +8,7 @@
          "http.rkt"
          "market.rkt"
          "planner.rkt"
+         "scheduler.rkt"
          "visualizer.rkt"
          "world.rkt")
 
@@ -22,6 +23,8 @@
          execute-planned-action
          route-for-plan
          ge-anchor-point
+         cooldown-jobs-from-characters
+         suggested-loop-sleep
          run-bot-once
          run-bot-loop
          (all-from-out "visualizer.rkt"))
@@ -257,6 +260,7 @@
     [else (error 'execute-planned-action "unsupported planned action ~v" (planned-action-name plan))]))
 
 (define (character-visual-record char)
+  (define cd (cooldown-remaining char))
   (hasheq 'name (character-field char 'name)
           'layer (or (character-field char 'layer) "overworld")
           'x (or (character-field char 'x) 0)
@@ -264,7 +268,8 @@
           'map_id (character-field char 'map_id)
           'hp (character-field char 'hp)
           'max_hp (character-field char 'max_hp)
-          'cooldown (character-field char 'cooldown 0)))
+          'cooldown cd
+          'on_cooldown (and (number? cd) (> cd 0))))
 
 (define (point-from-char char)
   (hasheq 'layer (or (character-field char 'layer) "overworld")
@@ -494,7 +499,33 @@
                                #:dry-run? dry-run?
                                #:world world*
                                #:from trader)))
-  results)
+  (values results my-chars))
+
+
+(define (cooldown-jobs-from-characters characters [now (current-seconds)])
+  (for/list ([char characters] #:when (hash? char))
+    (define remaining (cooldown-remaining char now))
+    (make-job #:character (string->symbol (format "~a" (hash-ref char 'name "char")))
+              #:action 'wait
+              #:ready-at (+ now (max 0 remaining))
+              #:priority 0)))
+
+(define (suggested-loop-sleep characters
+                              #:base-seconds [base-seconds 2]
+                              #:min-seconds [min-seconds 1]
+                              #:max-seconds [max-seconds 15]
+                              #:now [now (current-seconds)])
+  (define jobs (cooldown-jobs-from-characters characters now))
+  (define any-cooling?
+    (for/or ([char characters] #:when (hash? char))
+      (> (cooldown-remaining char now) 0)))
+  (if any-cooling?
+      (suggested-wait-seconds jobs
+                              #:now now
+                              #:min-seconds min-seconds
+                              #:max-seconds max-seconds
+                              #:default-seconds base-seconds)
+      base-seconds))
 
 (define (run-bot-loop bot
                       #:config [config (current-config)]
@@ -519,22 +550,32 @@
     (when (< n iterations)
       (printf "\n--- tick ~a ---\n" (add1 n))
       (flush-output)
-      (with-handlers ([exn:fail:artifacts-api?
-                       (lambda (exn)
-                         (define err (exn:fail:artifacts-api-error exn))
-                         (printf "API error ~a: ~a\n"
-                                 (api-error-code err)
-                                 (api-error-message err))
-                         (flush-output))]
-                      [exn:fail?
-                       (lambda (exn)
-                         (printf "Runner error: ~a\n" (exn-message exn))
-                         (flush-output))])
-        (run-bot-once bot
-                      #:config config
-                      #:world world
-                      #:encyclopedia encyclopedia
-                      #:dry-run? dry-run?
-                      #:publish-visualizer? visualizer?))
-      (sleep sleep-seconds)
+      (define wait
+        (with-handlers ([exn:fail:artifacts-api?
+                         (lambda (exn)
+                           (define err (exn:fail:artifacts-api-error exn))
+                           (printf "API error ~a: ~a\n"
+                                   (api-error-code err)
+                                   (api-error-message err))
+                           (flush-output)
+                           sleep-seconds)]
+                        [exn:fail?
+                         (lambda (exn)
+                           (printf "Runner error: ~a\n" (exn-message exn))
+                           (flush-output)
+                           sleep-seconds)])
+          (define-values (tick-results chars)
+            (run-bot-once bot
+                          #:config config
+                          #:world world
+                          #:encyclopedia encyclopedia
+                          #:dry-run? dry-run?
+                          #:publish-visualizer? visualizer?))
+          (define next-wait
+            (suggested-loop-sleep chars #:base-seconds sleep-seconds))
+          (when (> next-wait sleep-seconds)
+            (printf "Cooldown wait ~as before next tick.\n" next-wait)
+            (flush-output))
+          next-wait))
+      (sleep wait)
       (loop (add1 n)))))

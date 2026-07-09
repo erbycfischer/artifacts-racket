@@ -9,6 +9,7 @@
          inventory-full?
          hp-ratio
          cooldown-ready?
+         cooldown-remaining
          content-at-character
          on-content?
          nearest-typed-content
@@ -39,11 +40,28 @@
   (define max-hp (character-field char 'max_hp 1))
   (if (zero? max-hp) 0 (/ hp max-hp)))
 
-(define (cooldown-ready? char [now (current-seconds)])
-  (define remaining (character-field char 'cooldown 0))
+(define (parse-cooldown-expiration value now)
   (cond
-    [(and (number? remaining) (> remaining 0)) #f]
-    [else #t]))
+    [(and (number? value) (> value 1000000000)) value] ; unix seconds
+    [(and (number? value) (>= value 0)) (+ now value)] ; relative seconds mistaken as expiration
+    [(string? value)
+     ;; Accept ISO-ish "YYYY-MM-DDTHH:MM:SSZ" by falling back to remaining field only.
+     #f]
+    [else #f]))
+
+(define (cooldown-remaining char [now (current-seconds)])
+  (define remaining (character-field char 'cooldown 0))
+  (define expiration (parse-cooldown-expiration
+                      (character-field char 'cooldown_expiration #f)
+                      now))
+  (define from-remaining
+    (if (and (number? remaining) (> remaining 0)) remaining 0))
+  (define from-expiration
+    (if expiration (max 0 (- expiration now)) 0))
+  (max from-remaining from-expiration))
+
+(define (cooldown-ready? char [now (current-seconds)])
+  (<= (cooldown-remaining char now) 0))
 
 (define (content-at-character char)
   (define interactions (character-field char 'interactions #f))

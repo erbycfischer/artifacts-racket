@@ -11,6 +11,7 @@ var _event_material: StandardMaterial3D
 var _raid_material: StandardMaterial3D
 var _decision_material: StandardMaterial3D
 var _market_material: StandardMaterial3D
+var _cooldown_material: StandardMaterial3D
 
 
 func _ready() -> void:
@@ -20,6 +21,7 @@ func _ready() -> void:
 	_raid_material = _make_material(Color(0.7, 0.2, 0.95))
 	_decision_material = _make_material(Color(1.0, 0.35, 0.75), 0.7)
 	_market_material = _make_material(Color(0.95, 0.8, 0.2), 0.65)
+	_cooldown_material = _make_material(Color(0.35, 0.55, 1.0), 0.45)
 
 
 func render_state(state: Node) -> void:
@@ -57,9 +59,34 @@ func _render_characters(characters: Array, decisions: Dictionary) -> void:
 		label.position = Vector3(0.0, 0.85, 0.0)
 		marker.add_child(label)
 
+		var cooldown := float(character.get("cooldown", 0))
+		if cooldown > 0.0 or bool(character.get("on_cooldown", false)):
+			_add_cooldown_ring(marker, cooldown)
+
 		var decision: Variant = decisions.get(str(character.get("name", "")), {})
 		if decision is Dictionary and not decision.is_empty():
 			_add_decision_pulse(marker, decision)
+
+
+
+func _add_cooldown_ring(parent: Node3D, cooldown: float) -> void:
+	var ring := MeshInstance3D.new()
+	var torus := TorusMesh.new()
+	var scale := clampf(0.35 + minf(cooldown, 20.0) * 0.02, 0.35, 0.75)
+	torus.inner_radius = scale
+	torus.outer_radius = scale + 0.12
+	ring.mesh = torus
+	ring.material_override = _cooldown_material
+	ring.position = Vector3(0.0, -0.35, 0.0)
+	ring.rotation_degrees = Vector3(90.0, 0.0, 0.0)
+	parent.add_child(ring)
+
+	var label := Label3D.new()
+	label.text = ("CD %.0fs" % cooldown) if cooldown > 0.0 else "CD"
+	label.font_size = 18
+	label.modulate = Color(0.55, 0.75, 1.0)
+	label.position = Vector3(0.0, -0.05, 0.0)
+	parent.add_child(label)
 
 
 func _add_decision_pulse(parent: Node3D, decision: Dictionary) -> void:
