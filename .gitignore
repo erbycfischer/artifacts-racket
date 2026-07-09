@@ -1,3 +1,7 @@
 .impeccable/
 .cursor/
 .racket-home/
+
+# Godot editor/cache
+godot/client/.godot/
+*.gd.uid

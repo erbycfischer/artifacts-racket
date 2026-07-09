@@ -24,16 +24,22 @@ func _ready() -> void:
 
 func render_state(state: Node) -> void:
 	_clear_children()
-	_render_characters(state.characters, state.latest_decisions)
+	var characters: Array = state.get("characters")
+	var decisions: Dictionary = state.get("latest_decisions")
+	var routes: Array = state.get("routes")
+	var events: Array = state.get("events")
+	var raids: Array = state.get("raids")
+	var market_signals: Array = state.get("market_signals")
+	_render_characters(characters, decisions)
 	if show_routes:
-		_render_routes(state.routes)
-	_render_points(state.events, "Event", _event_material, 0.55)
-	_render_points(state.raids, "Raid", _raid_material, 0.7)
+		_render_routes(routes)
+	_render_points(events, "Event", _event_material, 0.55)
+	_render_points(raids, "Raid", _raid_material, 0.7)
 	if show_market_signals:
-		_render_market_signals(state.market_signals)
+		_render_market_signals(market_signals)
 
 
-func _render_characters(characters: Array[Dictionary], decisions: Dictionary) -> void:
+func _render_characters(characters: Array, decisions: Dictionary) -> void:
 	for character in characters:
 		var marker := MeshInstance3D.new()
 		marker.name = "Character_%s" % character.get("name", "unknown")
@@ -73,7 +79,7 @@ func _add_decision_pulse(parent: Node3D, decision: Dictionary) -> void:
 	parent.add_child(label)
 
 
-func _render_routes(routes: Array[Dictionary]) -> void:
+func _render_routes(routes: Array) -> void:
 	for route in routes:
 		var points: Variant = route.get("points", [])
 		if not (points is Array) or points.size() < 2:
@@ -101,7 +107,7 @@ func _add_route_segment(a: Dictionary, b: Dictionary) -> void:
 	add_child(mesh)
 
 
-func _render_points(items: Array[Dictionary], prefix: String, material: StandardMaterial3D, height: float) -> void:
+func _render_points(items: Array, prefix: String, material: StandardMaterial3D, height: float) -> void:
 	for item in items:
 		var marker := MeshInstance3D.new()
 		marker.name = "%s_%s" % [prefix, item.get("code", item.get("name", "item"))]
@@ -114,7 +120,7 @@ func _render_points(items: Array[Dictionary], prefix: String, material: Standard
 		add_child(marker)
 
 
-func _render_market_signals(signals: Array[Dictionary]) -> void:
+func _render_market_signals(signals: Array) -> void:
 	for signal_data in signals:
 		var marker := MeshInstance3D.new()
 		marker.name = "Market_%s" % signal_data.get("code", "signal")
