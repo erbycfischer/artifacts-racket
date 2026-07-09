@@ -23,6 +23,7 @@
          execute-planned-action
          route-for-plan
          ge-anchor-point
+         fetch-world-others
          cooldown-jobs-from-characters
          suggested-loop-sleep
          run-bot-once
@@ -214,7 +215,7 @@
                           [else (raise exn)]))])
        (character-data (get-my-characters #:config config)))]
     [dry-run?
-     (printf "No ARTIFACTS_TOKEN; dry-run using synthetic characters.\n")
+     (printf "No ARTIFACTS_API_TOKEN/ARTIFACTS_TOKEN; dry-run using synthetic characters.\n")
      (flush-output)
      (synthetic-account bot)]
     [else
@@ -261,6 +262,11 @@
 
 (define (character-visual-record char)
   (define cd (cooldown-remaining char))
+  (define inv (character-field char 'inventory '()))
+  (define items (if (list? inv) inv '()))
+  (define used
+    (for/sum ([slot items] #:when (hash? slot))
+      (hash-ref slot 'quantity 0)))
   (hasheq 'name (character-field char 'name)
           'layer (or (character-field char 'layer) "overworld")
           'x (or (character-field char 'x) 0)
@@ -268,6 +274,11 @@
           'map_id (character-field char 'map_id)
           'hp (character-field char 'hp)
           'max_hp (character-field char 'max_hp)
+          'gold (character-field char 'gold 0)
+          'level (character-field char 'level 1)
+          'inventory (hasheq 'used used
+                             'max (character-field char 'inventory_max_items 0)
+                             'slots (min 8 (length items)))
           'cooldown cd
           'on_cooldown (and (number? cd) (> cd 0))))
 
@@ -400,20 +411,76 @@
              (if (list? pts) pts '()))))
   (append from-chars from-events from-routes))
 
-(define (publish-world-snapshot! world characters events #:routes [routes '()])
+
+(define (fetch-world-others #:config [config (current-config)]
+                            #:limit [limit 12]
+                            #:exclude [exclude '()])
+  (with-handlers ([exn:fail? (lambda (_exn) '())])
+    (define response (get-character-leaderboard #:size (min limit 100) #:config config))
+    (define entries (let ([data (response-data response)]) (if (list? data) data '())))
+    (define exclude-set
+      (for/hash ([n exclude] #:when n)
+        (values (string-downcase (format "~a" n)) #t)))
+    (define names
+      (for/list ([e entries]
+                 #:when (and (hash? e) (hash-ref e 'name #f))
+                 #:unless (hash-has-key? exclude-set (string-downcase (format "~a" (hash-ref e 'name)))))
+        (hash-ref e 'name)))
+    (define limited (if (> (length names) limit) (take names limit) names))
+    (filter values
+            (for/list ([name limited])
+              (with-handlers ([exn:fail? (lambda (_exn) #f)])
+                (define char (response-data (get-character name #:config config)))
+                (and (hash? char)
+                     (hasheq 'name name
+                             'layer (hash-ref char 'layer "overworld")
+                             'x (hash-ref char 'x 0)
+                             'y (hash-ref char 'y 0)
+                             'map_id (hash-ref char 'map_id #f)
+                             'level (hash-ref char 'level 1)
+                             'skin (hash-ref char 'skin "")
+                             'other #t
+                             'cooldown (hash-ref char 'cooldown 0)
+                             'on_cooldown #f)))))))
+
+(define (raid-visual-record raid)
+  (and (hash? raid)
+       (hasheq 'code (hash-ref raid 'code (hash-ref raid 'name "raid"))
+               'layer (hash-ref raid 'layer "overworld")
+               'x (hash-ref raid 'x 0)
+               'y (hash-ref raid 'y 0))))
+
+(define (active-raids-list #:config [config (current-config)]
+                           #:dry-run? [dry-run? #f])
+  (cond
+    [(not (config-has-token? config)) '()]
+    [else
+     (with-handlers ([exn:fail:artifacts-api?
+                      (lambda (exn) (if dry-run? '() (raise exn)))]
+                     [exn:fail? (lambda (_exn) '())])
+       (define response (get-raids #:config config))
+       (define data (response-data response))
+       (filter values (map raid-visual-record (if (list? data) data '()))))]))
+
+(define (publish-world-snapshot! world characters events
+                                 #:routes [routes '()]
+                                 #:raids [raids '()])
   (define focuses (snapshot-focus-points characters events routes))
   (visualizer-publish!
    (world-snapshot-message
     #:maps (summarize-maps-for-visualizer (world-index-maps world)
                                          #:focuses focuses)
-    #:characters (map character-visual-record characters)
+    #:characters (append (map character-visual-record characters)
+                       (fetch-world-others #:limit 12
+                       #:exclude (for/list ([c characters] #:when (hash? c))
+                                  (hash-ref c 'name #f))))
     #:routes routes
     #:events (for/list ([e events] #:when (hash? e))
                (hasheq 'code (hash-ref e 'code (hash-ref e 'name "event"))
                        'layer (hash-ref e 'layer "overworld")
                        'x (hash-ref e 'x 0)
                        'y (hash-ref e 'y 0)))
-    #:raids '())))
+    #:raids raids)))
 
 (define (publish-decision! name plan)
   (visualizer-publish!
@@ -485,7 +552,11 @@
                   (execute-planned-action name plan #:config config)))
             (list name 'acted result)])])))
   (when publish-visualizer?
-    (publish-world-snapshot! world* my-chars events #:routes (reverse planned-routes))
+    (define routes* (reverse planned-routes))
+    (bot-route-overlay routes*)
+    (unless (session-owns-snapshots?)
+      (define raids (active-raids-list #:config config #:dry-run? dry-run?))
+      (publish-world-snapshot! world* my-chars events #:routes routes* #:raids raids))
     ;; Dry-run always emits a sample market signal so Godot can exercise overlays
     ;; without waiting for a live GE scan plan.
     (when (or dry-run? saw-market-scan?)
@@ -534,9 +605,12 @@
                       #:dry-run? [dry-run? #f]
                       #:visualizer? [visualizer? (visualizer-enabled?)]
                       #:visualizer-port [visualizer-port 8787])
-  ;; Godot is optional. Bots keep running even if the hub fails or no client connects.
+  ;; Godot is optional. Attach to an existing hub when present; otherwise start one.
   (when visualizer?
-    (start-visualizer-hub! #:port visualizer-port #:enabled? #t))
+    (if (hub-alive?)
+        (printf "Visualizer hub already running; bot will publish overlays only.\n")
+        (start-visualizer-hub! #:port visualizer-port #:enabled? #t))
+    (flush-output))
   (printf "Loading world and encyclopedia...\n")
   (flush-output)
   (define world (load-world-index #:config config))

@@ -13,10 +13,16 @@
          start-visualizer-hub!
          stop-visualizer-hub!
          visualizer-publish!
+         set-visualizer-command-handler!
+         session-owns-snapshots?
+         bot-route-overlay
          make-protocol-message
          world-snapshot-message
          bot-decision-message
          market-signal-message
+         session-status-message-proto
+         action-result-message-proto
+         account-logs-message-proto
          select-maps-for-visualizer
          summarize-maps-for-visualizer)
 
@@ -28,6 +34,17 @@
 (define clients (mutable-set))
 (define clients-sema (make-semaphore 1))
 (define publish-ch (make-async-channel))
+(define command-handler #f)
+
+(define (set-visualizer-command-handler! handler)
+  (set! command-handler handler))
+
+;; When a standalone session service is running, it owns world.snapshot publishes.
+;; Bots still publish decisions/routes/market; routes go through bot-route-overlay.
+(define session-owns-snapshots? (make-parameter #f))
+(define bot-route-overlay (make-parameter '()))
+
+
 
 (define (visualizer-enabled?)
   (define v (getenv "ARTIFACTS_VISUALIZER"))
@@ -72,6 +89,37 @@
   (make-protocol-message
    "bot.decision"
    (if target (hash-set data 'target target) data)))
+
+
+(define (session-status-message-proto #:authenticated [authenticated #f]
+                                      #:selected [selected #f]
+                                      #:characters [characters '()]
+                                      #:error [error #f])
+  (make-protocol-message
+   "session.status"
+   (hasheq 'authenticated authenticated
+           'selected selected
+           'characters characters
+           'error error)))
+
+(define (action-result-message-proto character action
+                                     #:ok [ok #t]
+                                     #:error-code [error-code #f]
+                                     #:message [message ""]
+                                     #:cooldown [cooldown #f])
+  (make-protocol-message
+   "action.result"
+   (hasheq 'character character
+           'action (if (symbol? action) (symbol->string action) (format "~a" action))
+           'ok ok
+           'error_code error-code
+           'message message
+           'cooldown cooldown)))
+
+(define (account-logs-message-proto entries)
+  (make-protocol-message
+   "account.logs"
+   (hasheq 'entries (if (list? entries) entries '()))))
 
 (define (market-signal-message code spread score #:x [x #f] #:y [y #f] #:layer [layer #f])
   (define data (hasheq 'code code 'spread spread 'score score))
@@ -132,7 +180,7 @@
           'layer (hash-ref m 'layer "overworld")
           'x (hash-ref m 'x 0)
           'y (hash-ref m 'y 0)
-          'skin (hash-ref m 'skin "forest")
+          'skin (hash-ref m 'skin "forest_1")
           'content_type (if (hash? content) (hash-ref content 'type "terrain") "terrain")
           'content_code (if (hash? content) (hash-ref content 'code "") "")
           'interactions (if interactions interactions #hasheq())))
@@ -184,11 +232,16 @@
     (cond
       [(eof-object? msg)
        (remove-client! c)
-       (ws-close! c)
+       (with-handlers ([exn:fail? void]) (ws-close! c))
        (printf "Visualizer client disconnected (~a total).\n" (length (snapshot-clients)))
        (flush-output)]
       [else
-       ;; Godot may send UI commands later; ignore for now.
+       (when command-handler
+         (with-handlers ([exn:fail?
+                          (lambda (exn)
+                            (printf "Visualizer command error: ~a\n" (exn-message exn))
+                            (flush-output))])
+           (command-handler msg)))
        (loop)])))
 
 (define (publisher-loop)
@@ -231,7 +284,7 @@
              (printf "Bots continue without Godot.\n")
              (flush-output)
              #f)])
-       (set! hub-stopper (ws-serve #:port port connection-handler))
+       (set! hub-stopper (ws-serve #:port port #:listen-ip "127.0.0.1" connection-handler))
        (set! hub-thread (thread publisher-loop))
        (set! hub-port port)
        (printf "Visualizer hub listening on ws://127.0.0.1:~a (optional).\n" port)

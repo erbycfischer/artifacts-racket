@@ -7,6 +7,7 @@
          "market.rkt"
          "planner.rkt"
          "scheduler.rkt"
+         "session.rkt"
          "visualizer.rkt"
          "world.rkt")
 
@@ -17,5 +18,6 @@
                        "market.rkt"
                        "planner.rkt"
                        "scheduler.rkt"
+                       "session.rkt"
                        "visualizer.rkt"
                        "world.rkt"))

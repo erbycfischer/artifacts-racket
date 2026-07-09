@@ -14,10 +14,16 @@ var _reconnect_delay := 3.0
 var _started := false
 var _was_open := false
 var _last_status := ""
+var _auto_reconnect := true
+
+
+func set_websocket_url(url: String) -> void:
+	websocket_url = url
 
 
 func connect_to_server() -> void:
 	_started = true
+	_auto_reconnect = true
 	_was_open = false
 	_reconnect_timer = 0.0
 	_socket = WebSocketPeer.new()
@@ -29,12 +35,27 @@ func connect_to_server() -> void:
 		_emit_status("connecting to %s" % websocket_url)
 
 
-func send_command(command: Dictionary) -> void:
-	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
-		return
+func disconnect_from_server() -> void:
+	_auto_reconnect = false
+	_started = false
+	_reconnect_timer = 0.0
+	_was_open = false
+	if _socket.get_ready_state() != WebSocketPeer.STATE_CLOSED:
+		_socket.close()
+	_emit_status("disconnected")
 
+
+func is_connected_to_hub() -> bool:
+	return _socket.get_ready_state() == WebSocketPeer.STATE_OPEN
+
+
+func send_command(command: Dictionary) -> bool:
+	if _socket.get_ready_state() != WebSocketPeer.STATE_OPEN:
+		_emit_status("cannot send; not connected")
+		return false
 	var payload := JSON.stringify(command)
 	_socket.send_text(payload)
+	return true
 
 
 func _process(delta: float) -> void:
@@ -43,7 +64,7 @@ func _process(delta: float) -> void:
 
 	if _reconnect_timer > 0.0:
 		_reconnect_timer -= delta
-		if _reconnect_timer <= 0.0:
+		if _reconnect_timer <= 0.0 and _auto_reconnect:
 			connect_to_server()
 		return
 
@@ -62,11 +83,16 @@ func _process(delta: float) -> void:
 			return
 		WebSocketPeer.STATE_CLOSED:
 			_was_open = false
-			_emit_status("websocket closed; retrying in %.0fs" % _reconnect_delay)
-			_schedule_reconnect()
+			if _auto_reconnect:
+				_emit_status("websocket closed; retrying in %.0fs" % _reconnect_delay)
+				_schedule_reconnect()
+			else:
+				_emit_status("disconnected")
 
 
 func _schedule_reconnect() -> void:
+	if not _auto_reconnect:
+		return
 	_reconnect_timer = _reconnect_delay
 	_reconnect_delay = minf(_reconnect_delay * 2.0, reconnect_max_seconds)
 

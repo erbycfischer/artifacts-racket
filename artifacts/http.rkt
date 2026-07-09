@@ -52,6 +52,8 @@
          get-raids
          get-raid
          get-raid-leaderboard
+         get-character-leaderboard
+         get-account-leaderboard
          simulate-fight
          action-move
          action-transition
@@ -332,6 +334,25 @@
 
 (define (get-raid-leaderboard code #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get (format "/raids/~a/leaderboard" code) #:page page #:size size #:config config))
+
+(define (get-character-leaderboard #:sort [sort #f]
+                                   #:page [page 1]
+                                   #:size [size 50]
+                                   #:config [config (current-config)])
+  (api-get "/leaderboard/characters"
+           #:params (append `((page . ,page) (size . ,size))
+                            (if sort `((sort . ,sort)) '()))
+           #:config config))
+
+(define (get-account-leaderboard #:sort [sort #f]
+                                 #:page [page 1]
+                                 #:size [size 50]
+                                 #:config [config (current-config)])
+  (api-get "/leaderboard/accounts"
+           #:params (append `((page . ,page) (size . ,size))
+                            (if sort `((sort . ,sort)) '()))
+           #:config config))
+
 
 (define (simulate-fight body #:config [config (current-config)])
   (api-post "/simulation/fight" #:body body #:config config))
