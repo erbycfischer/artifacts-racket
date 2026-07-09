@@ -13,7 +13,7 @@ TypeScript is not part of the initial stack. It can be added later only if we de
 
 - `artifacts/`: Racket package and core modules.
 - `artifacts/lang/`: `#lang artifacts` reader/runtime.
-- `examples/`: example bot programs.
+- `examples/`: bot programs, including the competitive live bot.
 - `godot/client/`: Godot visualizer project.
 - `docs/`: architecture notes and design docs.
 
@@ -28,7 +28,26 @@ TypeScript is not part of the initial stack. It can be added later only if we de
 Install the Racket package from the project root:
 
 ```sh
-raco pkg install --auto
+raco pkg install --auto --link
+```
+
+If package install is awkward in your environment, point Racket at the repo instead:
+
+```sh
+export PLTCOLLECTS="$PWD:"
+```
+
+Play with the competitive `#lang artifacts` bot:
+
+```sh
+export ARTIFACTS_TOKEN=your_token_here
+racket examples/apex-bot.rkt
+```
+
+Dry-run a few planner ticks without sending actions:
+
+```sh
+ARTIFACTS_DRY_RUN=1 ARTIFACTS_ITERATIONS=3 racket examples/apex-bot.rkt
 ```
 
 Run the starter DSL example:
@@ -45,4 +64,4 @@ godot --path godot/client
 
 ## Current Status
 
-This is the first scaffold. The Racket package has API configuration, basic REST helpers, combat formulas, market spread helpers, world indexing, scheduler primitives, and a minimal `#lang artifacts`. The Godot project renders sample tiles and is ready for live state integration.
+`#lang artifacts` now has a live runner and planner. `examples/apex-bot.rkt` binds roles to your account characters and keeps them busy with combat, gathering, banking, event intercepts, and market scans.

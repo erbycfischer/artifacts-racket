@@ -1,5 +1,7 @@
 #lang artifacts
 
+;; Minimal DSL example. For live play, use examples/apex-bot.rkt.
+
 (bot starter
   (character miner #:role 'mining
     (goal 'bootstrap-bankroll

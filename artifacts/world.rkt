@@ -13,14 +13,23 @@
 (define (map-field map key)
   (hash-ref map key #f))
 
-(define (content-code map)
+(define (json-object? v)
+  (and (hash? v) (not (eq? v 'null))))
+
+(define (map-content map)
   (define interactions (map-field map 'interactions))
-  (define content (and interactions (hash-ref interactions 'content #f)))
+  (cond
+    [(not (json-object? interactions)) #f]
+    [else
+     (define content (hash-ref interactions 'content #f))
+     (and (json-object? content) content)]))
+
+(define (content-code map)
+  (define content (map-content map))
   (and content (hash-ref content 'code #f)))
 
 (define (content-type map)
-  (define interactions (map-field map 'interactions))
-  (define content (and interactions (hash-ref interactions 'content #f)))
+  (define content (map-content map))
   (and content (hash-ref content 'type #f)))
 
 (define (require-map-field map key)

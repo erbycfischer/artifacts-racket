@@ -1,12 +1,11 @@
 #lang racket
 
-(require "../core.rkt")
+(require "../core.rkt"
+         "../dsl-forms.rkt"
+         "../runner.rkt")
 
 (provide (rename-out [artifacts-module-begin #%module-begin])
-         #%app
-         #%datum
-         #%top-interaction
-         quote
+         (except-out (all-from-out racket) #%module-begin)
          bot
          character
          strategy
@@ -15,18 +14,9 @@
          known-action?
          execute-action
          execute-goal
-         (struct-out bot-spec)
-         (struct-out character-spec)
-         (struct-out strategy-spec)
-         (struct-out goal-spec)
-         (struct-out action-spec)
-         (all-from-out "../core.rkt"))
-
-(struct bot-spec (name forms) #:transparent)
-(struct character-spec (name role forms) #:transparent)
-(struct strategy-spec (name forms) #:transparent)
-(struct goal-spec (target actions) #:transparent)
-(struct action-spec (name payload) #:transparent)
+         play
+         (all-from-out "../core.rkt")
+         (all-from-out "../runner.rkt"))
 
 (define known-action-names
   '(move
@@ -180,3 +170,14 @@
     (error 'execute-goal "expected goal spec, got ~v" spec))
   (for/list ([item (goal-spec-actions spec)])
     (execute-action character-name item #:config config)))
+
+(define (play bot
+              #:config [config (current-config)]
+              #:iterations [iterations +inf.0]
+              #:sleep-seconds [sleep-seconds 2]
+              #:dry-run? [dry-run? #f])
+  (run-bot-loop bot
+                #:config config
+                #:iterations iterations
+                #:sleep-seconds sleep-seconds
+                #:dry-run? dry-run?))

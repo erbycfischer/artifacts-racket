@@ -7,7 +7,9 @@
          "../artifacts/lang/runtime.rkt"
          "../artifacts/market.rkt"
          "../artifacts/scheduler.rkt"
-         "../artifacts/world.rkt")
+         "../artifacts/world.rkt"
+         "../artifacts/planner.rkt"
+         "../artifacts/runner.rkt")
 
 (define test-config
   (artifacts-config "https://api.artifactsmmo.com/"
@@ -63,6 +65,16 @@
     (check-equal? (api-error-code error) 499)
     (check-equal? (api-error-retry-after error) "12")
     (check-equal? (api-error-cooldown-until error) "2026-07-08T00:00:00Z"))
+
+  (test-case "world index tolerates null map content"
+    (define empty #hasheq((map_id . "empty")
+                          (layer . "main")
+                          (x . 0)
+                          (y . 0)
+                          (interactions . #hasheq((content . null)))))
+    (define index (build-world-index (list empty)))
+    (check-equal? (length (world-index-maps index)) 1)
+    (check-false (nearest-content-map index empty "monster" "chicken")))
 
   (test-case "world index finds nearest content"
     (define start #hasheq((map_id . "start") (layer . "main") (x . 0) (y . 0)))
@@ -124,4 +136,44 @@
          (execute-action "alice"
                          (action 'npc-sell #hasheq((code . "small_health_potion") (quantity . 1)))
                          #:config missing-token-config))))
-    (check-equal? (api-error-status npc-sell-error) 452)))
+    (check-equal? (api-error-status npc-sell-error) 452))
+
+  (test-case "planner rests low HP and picks safe monsters"
+    (define char
+      #hasheq((name . "A")
+              (level . 3)
+              (hp . 10)
+              (max_hp . 100)
+              (cooldown . 0)
+              (inventory_max_items . 20)
+              (inventory . ())
+              (x . 0)
+              (y . 0)
+              (layer . "overworld")
+              (map_id . 1)
+              (mining_level . 1)
+              (interactions . #hasheq((content . #f)))))
+    (define world (build-world-index
+                   (list #hasheq((map_id . 1) (layer . "overworld") (x . 0) (y . 0)
+                                 (interactions . #hasheq((content . #f))))
+                         #hasheq((map_id . 2) (layer . "overworld") (x . 1) (y . 0)
+                                 (interactions . #hasheq((content . #hasheq((type . "monster")
+                                                                             (code . "chicken")))))))))
+    (define plan (plan-character char world #:role 'combat #:monsters (list #hasheq((code . "chicken") (level . 1)))))
+    (check-equal? (planned-action-name plan) 'rest)
+    (define healthy (hash-set* char 'hp 90 'interactions #hasheq((content . #hasheq((type . "monster") (code . "chicken"))))))
+    (define fight-plan (plan-character healthy world #:role 'combat #:monsters (list #hasheq((code . "chicken") (level . 1))
+                                                                                    #hasheq((code . "boss") (level . 40)))))
+    (check-equal? (planned-action-name fight-plan) 'fight))
+
+  (test-case "bind-bot-to-account maps roles onto live character names"
+    (define bot
+      (bot-spec 'apex
+                (list (character-spec 'fighter 'combat '())
+                      (character-spec 'miner 'mining '())
+                      (strategy-spec 's '()))))
+    (define live (list #hasheq((name . "Alpha")) #hasheq((name . "Beta"))))
+    (define bound (bind-bot-to-account bot live))
+    (check-equal? (map character-spec-name (bot-characters bound)) '(Alpha Beta))
+    (check-equal? (map character-spec-role (bot-characters bound)) '(combat mining)))
+)
