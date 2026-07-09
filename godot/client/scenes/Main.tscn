@@ -1,15 +1,39 @@
-[gd_scene load_steps=2 format=3]
+[gd_scene load_steps=8 format=3]
 
 [ext_resource type="Script" path="res://scripts/Main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/visual_state.gd" id="2_state"]
+[ext_resource type="Script" path="res://scripts/state_client.gd" id="3_client"]
+[ext_resource type="Script" path="res://scripts/map_renderer.gd" id="4_map"]
+[ext_resource type="Script" path="res://scripts/marker_renderer.gd" id="5_marker"]
+[ext_resource type="Script" path="res://scripts/camera_rig.gd" id="6_camera"]
+[ext_resource type="Script" path="res://scripts/visualizer_ui.gd" id="7_ui"]
 
 [node name="Main" type="Node3D"]
 script = ExtResource("1_main")
 
-[node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 0.866025, 0.5, 0, -0.5, 0.866025, 0, 18, 24)
+[node name="VisualState" type="Node" parent="."]
+script = ExtResource("2_state")
+
+[node name="StateClient" type="Node" parent="."]
+script = ExtResource("3_client")
+
+[node name="WorldRoot" type="Node3D" parent="."]
+
+[node name="MapRenderer" type="Node3D" parent="WorldRoot"]
+script = ExtResource("4_map")
+
+[node name="MarkerRenderer" type="Node3D" parent="WorldRoot"]
+script = ExtResource("5_marker")
+
+[node name="CameraRig" type="Node3D" parent="."]
+script = ExtResource("6_camera")
+
+[node name="Camera3D" type="Camera3D" parent="CameraRig"]
+transform = Transform3D(1, 0, 0, 0, 0.573576, 0.819152, 0, -0.819152, 0.573576, 0, 18, 22)
 current = true
 
 [node name="DirectionalLight3D" type="DirectionalLight3D" parent="."]
 transform = Transform3D(0.707107, -0.353553, 0.612372, 0, 0.866025, 0.5, -0.707107, -0.353553, 0.612372, 0, 10, 0)
 
-[node name="WorldRoot" type="Node3D" parent="."]
+[node name="UIRoot" type="CanvasLayer" parent="."]
+script = ExtResource("7_ui")
