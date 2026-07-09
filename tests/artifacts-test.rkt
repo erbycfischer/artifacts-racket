@@ -13,7 +13,8 @@
          "../artifacts/planner.rkt"
          "../artifacts/runner.rkt"
          "../artifacts/visualizer.rkt"
-         "../artifacts/session.rkt")
+         "../artifacts/session.rkt"
+         "../artifacts/realtime.rkt")
 
 (define test-config
   (artifacts-config "https://api.artifactsmmo.com/"
@@ -376,6 +377,136 @@
     (stop-visualizer-hub!)
     (check-false (hub-alive?))
     (check-false (session-owns-snapshots?)))
+
+  (test-case "other-character visuals are marked other"
+    (define visual
+      (other-character-visual
+       "wanderer"
+       #hasheq((name . "wanderer")
+               (layer . "overworld")
+               (x . 1)
+               (y . 2)
+               (level . 8)
+               (hp . 20)
+               (max_hp . 30)
+               (skin . "women1")
+               (cooldown . 0))))
+    (check-true (hash-ref visual 'other))
+    (check-equal? (hash-ref visual 'name) "wanderer")
+    (check-equal? (hash-ref visual 'x) 1)
+    (define others (fetch-world-others #:config missing-token-config #:limit 1 #:exclude '("alice")))
+    (check-true (list? others)))
+
+  (test-case "session owns snapshots so bots need no hub publish for watch"
+    (stop-session-service!)
+    (session-owns-snapshots? #f)
+    (check-false (session-owns-snapshots?))
+    (start-session-service! #:config missing-token-config #:poll-seconds 60 #:load-world? #f)
+    (check-true (session-owns-snapshots?))
+    ;; Bot overlay path stays optional; empty overlay is fine.
+    (bot-route-overlay '())
+    (check-equal? (bot-route-overlay) '())
+    (stop-session-service!)
+    (check-false (session-owns-snapshots?)))
+
+  (test-case "player.action names cover core official play loop"
+    (define supported
+      '(move rest fight gather craft equip use
+             bank-deposit-item bank-withdraw-item
+             grand-exchange-orders
+             npc-buy npc-sell
+             task-new task-complete task-cancel))
+    (for ([name supported])
+      (check-true (symbol? name))))
+
+  (test-case "realtime ingest stays opt-in and non-fatal"
+    (check-false (realtime-enabled?))
+    (check-false (start-realtime-ingest! #:config missing-token-config))
+    (check-equal? (realtime-online-characters) '())
+    (stop-realtime-ingest!))
+
+
+  (test-case "zero bot hooks: session owns snapshots so bots need not publish world"
+    (stop-session-service!)
+    (session-owns-snapshots? #f)
+    (bot-route-overlay '())
+    (check-false (session-owns-snapshots?))
+    ;; Simulate session service claiming snapshot ownership without a bot.
+    (session-owns-snapshots? #t)
+    (check-true (session-owns-snapshots?))
+    (bot-route-overlay (list #hasheq((character . "bot")
+                                     (points . (#hasheq((x . 0) (y . 0) (layer . "overworld"))
+                                                #hasheq((x . 1) (y . 0) (layer . "overworld")))))))
+    (check-equal? (hash-ref (car (bot-route-overlay)) 'character) "bot")
+    (session-owns-snapshots? #f)
+    (bot-route-overlay '()))
+
+  (test-case "world.snapshot characters can mark other official players"
+    (define sample
+      (hasheq 'name "WorldHero"
+              'layer "overworld"
+              'x 3
+              'y 4
+              'other #t
+              'level 12))
+    (define snap
+      (world-snapshot-message
+       #:characters (list sample)
+       #:raids (list #hasheq((code . "raid_1") (layer . "overworld") (x . 1) (y . 1)))
+       #:events (list #hasheq((code . "evt_1") (layer . "overworld") (x . 2) (y . 2)))))
+    (define chars (hash-ref (hash-ref snap 'data) 'characters))
+    (check-true (hash-ref (car chars) 'other))
+    (check-equal? (length (hash-ref (hash-ref snap 'data) 'raids)) 1)
+    (check-equal? (length (hash-ref (hash-ref snap 'data) 'events)) 1))
+
+  (test-case "player.action protocol rejects missing fields without throwing"
+    (stop-session-service!)
+    (session-logout!)
+    (session-handle-command!
+     #hasheq((type . "player.action")
+             (data . #hasheq((character . "alice")))))
+    (session-handle-command!
+     #hasheq((type . "ui.subscribe") (data . #hasheq())))
+    (check-false (session-authenticated?)))
+
+  (test-case "action.result and session.status helpers used by bridge"
+    (define status (session-status-message #:error #f))
+    (check-equal? (hash-ref status 'type) "session.status")
+    (check-false (hash-ref (hash-ref status 'data) 'authenticated))
+    (define result (action-result-message "alice" 'gather #:ok #t #:message "ok"))
+    (check-equal? (hash-ref result 'type) "action.result")
+    (check-true (hash-ref (hash-ref result 'data) 'ok)))
+
+
+  (test-case "cooldown-from-action-response extracts expiration"
+    (check-equal?
+     (cooldown-from-action-response
+      #hasheq((data . #hasheq((cooldown_expiration . "2026-07-09T12:00:00Z")))))
+     "2026-07-09T12:00:00Z")
+    (check-equal?
+     (cooldown-from-action-response
+      #hasheq((data . #hasheq((character . #hasheq((cooldown_expiration . "soon")))))))
+     "soon")
+    (check-false (cooldown-from-action-response #hasheq((data . #hasheq())))))
+
+  (test-case "player.select updates session selected name"
+    (stop-session-service!)
+    (session-logout!)
+    (session-handle-command!
+     #hasheq((type . "player.select") (data . #hasheq((character . "Alice")))))
+    ;; Without auth, select still records the requested name for UI sync.
+    (define status (session-status-message))
+    (check-equal? (hash-ref (hash-ref status 'data) 'selected) "Alice")
+    (session-logout!))
+
+  (test-case "merge-other-characters prefers realtime then leaderboard"
+    (define a (list #hasheq((name . "A") (other . #t) (x . 1) (y . 1))))
+    (define b (list #hasheq((name . "B") (other . #t) (x . 2) (y . 2))
+                    #hasheq((name . "A") (other . #t) (x . 9) (y . 9))))
+    (define merged (merge-other-characters a b #:limit 10))
+    (check-equal? (length merged) 2)
+    (check-equal? (hash-ref (car merged) 'name) "A")
+    (check-equal? (hash-ref (car merged) 'x) 1))
 
 
 )

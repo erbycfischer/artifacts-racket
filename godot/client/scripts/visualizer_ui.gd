@@ -34,10 +34,16 @@ var _rest_btn: Button
 var _bank_deposit_btn: Button
 var _bank_withdraw_btn: Button
 var _ge_scan_btn: Button
+var _craft_btn: Button
+var _task_new_btn: Button
+var _task_complete_btn: Button
+var _npc_buy_btn: Button
+var _transition_btn: Button
 
 var _selected_tile: Dictionary = {}
 var _selected_character: String = ""
 var _characters_cooling: Dictionary = {}
+var _authenticated := false
 
 
 func _ready() -> void:
@@ -95,6 +101,7 @@ func set_session_status(status: Dictionary) -> void:
 	if _session_label == null:
 		return
 	var authenticated := bool(status.get("authenticated", false))
+	_authenticated = authenticated
 	var selected := str(status.get("selected", ""))
 	var err := str(status.get("error", ""))
 	var chars: Array = status.get("characters", [])
@@ -109,7 +116,10 @@ func set_session_status(status: Dictionary) -> void:
 		text += " | error: %s" % err
 	_session_label.text = text
 	if authenticated:
-		set_mode("Playing" if not selected.is_empty() else "Authenticated", "manual actions enabled")
+		set_mode("Playing" if not selected.is_empty() else "Authenticated", "official API actions enabled")
+	else:
+		set_mode("Unauthenticated", "enter token or set ARTIFACTS_API_TOKEN on bridge")
+	_update_action_buttons()
 
 
 func set_action_result(result: Dictionary) -> void:
@@ -222,6 +232,11 @@ func fixtures_only() -> bool:
 	return _fixtures_only.button_pressed if _fixtures_only else false
 
 
+func set_fixtures_only(enabled: bool) -> void:
+	if _fixtures_only:
+		_fixtures_only.set_pressed_no_signal(enabled)
+
+
 func _refresh_character_options(chars: Array, selected: String) -> void:
 	if _character_option == null:
 		return
@@ -243,20 +258,31 @@ func _refresh_character_options(chars: Array, selected: String) -> void:
 func _update_action_buttons() -> void:
 	var cooling := float(_characters_cooling.get(_selected_character, 0.0)) > 0.0
 	var content_type := str(_selected_tile.get("content_type", ""))
+	var no_char := _selected_character.is_empty() or not _authenticated
 	if _move_btn:
-		_move_btn.disabled = cooling or _selected_tile.is_empty() or _selected_character.is_empty()
+		_move_btn.disabled = cooling or _selected_tile.is_empty() or no_char
 	if _fight_btn:
-		_fight_btn.disabled = cooling or content_type != "monster" or _selected_character.is_empty()
+		_fight_btn.disabled = cooling or content_type != "monster" or no_char
 	if _gather_btn:
-		_gather_btn.disabled = cooling or content_type != "resource" or _selected_character.is_empty()
+		_gather_btn.disabled = cooling or content_type != "resource" or no_char
 	if _rest_btn:
-		_rest_btn.disabled = cooling or _selected_character.is_empty()
+		_rest_btn.disabled = cooling or no_char
 	if _bank_deposit_btn:
-		_bank_deposit_btn.disabled = cooling or content_type != "bank" or _selected_character.is_empty()
+		_bank_deposit_btn.disabled = cooling or content_type != "bank" or no_char
 	if _bank_withdraw_btn:
-		_bank_withdraw_btn.disabled = cooling or content_type != "bank" or _selected_character.is_empty()
+		_bank_withdraw_btn.disabled = cooling or content_type != "bank" or no_char
 	if _ge_scan_btn:
-		_ge_scan_btn.disabled = cooling or content_type != "grand_exchange" or _selected_character.is_empty()
+		_ge_scan_btn.disabled = cooling or content_type != "grand_exchange" or no_char
+	if _craft_btn:
+		_craft_btn.disabled = cooling or content_type != "workshop" or no_char
+	if _task_new_btn:
+		_task_new_btn.disabled = cooling or (content_type != "tasks_master" and content_type != "npc") or no_char
+	if _task_complete_btn:
+		_task_complete_btn.disabled = cooling or (content_type != "tasks_master" and content_type != "npc") or no_char
+	if _npc_buy_btn:
+		_npc_buy_btn.disabled = cooling or content_type != "npc" or no_char
+	if _transition_btn:
+		_transition_btn.disabled = cooling or no_char
 
 
 func _emit_action(action_name: String, payload: Dictionary = {}) -> void:
@@ -292,7 +318,7 @@ func _build_ui() -> void:
 	scroll.add_child(column)
 
 	var title := Label.new()
-	title.text = "Artifacts 3D Visualizer"
+	title.text = "Official Artifacts 3D Client"
 	title.add_theme_font_size_override("font_size", 18)
 	column.add_child(title)
 
@@ -375,11 +401,15 @@ func _build_ui() -> void:
 	_move_btn = Button.new()
 	_move_btn.text = "Move"
 	_move_btn.pressed.connect(func() -> void:
-		_emit_action("move", {
+		var payload := {
 			"x": int(_selected_tile.get("x", 0)),
 			"y": int(_selected_tile.get("y", 0)),
 			"layer": str(_selected_tile.get("layer", "overworld")),
-		})
+		}
+		var map_id: Variant = _selected_tile.get("map_id", null)
+		if map_id != null and str(map_id) != "":
+			payload["map_id"] = map_id
+		_emit_action("move", payload)
 	)
 	action_row.add_child(_move_btn)
 	_fight_btn = Button.new()
@@ -409,6 +439,33 @@ func _build_ui() -> void:
 	_ge_scan_btn.text = "GE scan"
 	_ge_scan_btn.pressed.connect(func() -> void: _emit_action("grand-exchange-orders", {}))
 	bank_row.add_child(_ge_scan_btn)
+
+	var d3_row := HBoxContainer.new()
+	column.add_child(d3_row)
+	_craft_btn = Button.new()
+	_craft_btn.text = "Craft"
+	_craft_btn.pressed.connect(func() -> void:
+		_emit_action("craft", {"code": str(_selected_tile.get("content_code", "")), "quantity": 1})
+	)
+	d3_row.add_child(_craft_btn)
+	_task_new_btn = Button.new()
+	_task_new_btn.text = "Task new"
+	_task_new_btn.pressed.connect(func() -> void: _emit_action("task-new", {}))
+	d3_row.add_child(_task_new_btn)
+	_task_complete_btn = Button.new()
+	_task_complete_btn.text = "Task done"
+	_task_complete_btn.pressed.connect(func() -> void: _emit_action("task-complete", {}))
+	d3_row.add_child(_task_complete_btn)
+	_npc_buy_btn = Button.new()
+	_npc_buy_btn.text = "NPC buy"
+	_npc_buy_btn.pressed.connect(func() -> void:
+		_emit_action("npc-buy", {"code": str(_selected_tile.get("content_code", "")), "quantity": 1})
+	)
+	d3_row.add_child(_npc_buy_btn)
+	_transition_btn = Button.new()
+	_transition_btn.text = "Transition"
+	_transition_btn.pressed.connect(func() -> void: _emit_action("transition", {}))
+	d3_row.add_child(_transition_btn)
 
 	_action_label = Label.new()
 	_action_label.text = "Action: none"

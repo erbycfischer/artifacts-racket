@@ -551,6 +551,8 @@
                           (reason . (planned-action-reason plan)))
                   (execute-planned-action name plan #:config config)))
             (list name 'acted result)])])))
+  ;; Optional overlays only. When the standalone bridge owns snapshots,
+  ;; bots do not need to publish world state for characters to appear in 3D.
   (when publish-visualizer?
     (define routes* (reverse planned-routes))
     (bot-route-overlay routes*)

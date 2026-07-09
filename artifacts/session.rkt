@@ -1,7 +1,8 @@
 #lang racket
 
-;; Account session for the optional visualizer hub.
-;; Owns auth, polling, and player action dispatch. Bots never require this module.
+;; Official Artifacts account session for the local 3D client bridge.
+;; Owns auth, official REST polling, and player action dispatch.
+;; Bots never require this module — watching uses official character state.
 
 (require json
          racket/set
@@ -9,6 +10,7 @@
          "config.rkt"
          "http.rkt"
          "planner.rkt"
+         "realtime.rkt"
          "runner.rkt"
          "visualizer.rkt"
          "world.rkt")
@@ -21,13 +23,16 @@
          session-select!
          session-status-message
          action-result-message
+         merge-other-characters
+         cooldown-from-action-response
          account-logs-message
          session-handle-command!
          start-session-service!
          stop-session-service!
          session-publish-snapshot!
          session-publish-status!
-         enrich-character-visual)
+         enrich-character-visual
+         other-character-visual)
 
 (define session-token #f)
 (define session-selected-name #f)
@@ -36,6 +41,13 @@
 (define session-poll-thread #f)
 (define session-stop? #f)
 (define session-sema (make-semaphore 1))
+;; Other-player lookups hit public character endpoints; refresh slower than own chars.
+(define session-others '())
+(define session-others-fetched-at 0)
+(define session-others-ttl-seconds
+  (or (let ([v (getenv "ARTIFACTS_OTHERS_POLL_SECONDS")])
+        (and v (string->number v)))
+      15))
 
 (define (with-session thunk)
   (call-with-semaphore session-sema thunk))
@@ -71,6 +83,8 @@
   (session-authenticated?))
 
 (define (session-logout!)
+  (set! session-others '())
+  (set! session-others-fetched-at 0)
   (session-set-token! #f)
   #t)
 
@@ -207,25 +221,83 @@
                'on_cooldown (let ([cd (hash-ref char 'cooldown 0)])
                               (and (number? cd) (> cd 0))))))
 
+(define (realtime-other-visuals #:exclude [exclude '()] #:limit [limit 40])
+  (define exclude-set
+    (list->set (map (lambda (n) (string-downcase (format "~a" n))) exclude)))
+  (define seen (mutable-set))
+  (define out '())
+  (for ([entry (realtime-online-characters)]
+        #:break (>= (length out) limit))
+    (define name
+      (cond
+        [(string? entry) entry]
+        [(hash? entry) (or (hash-ref entry 'name #f) (hash-ref entry 'character #f))]
+        [else #f]))
+    (define key (and name (string-downcase (format "~a" name))))
+    (when (and key
+               (not (set-member? exclude-set key))
+               (not (set-member? seen key)))
+      (set-add! seen key)
+      (define visual
+        (cond
+          [(hash? entry) (other-character-visual name entry)]
+          [else (hasheq 'name name
+                        'layer "overworld"
+                        'x 0
+                        'y 0
+                        'other #t
+                        'cooldown 0
+                        'on_cooldown #f)]))
+      (when visual
+        (set! out (cons visual out)))))
+  (reverse out))
+
+(define (merge-other-characters primary secondary #:limit [limit 40])
+  (define seen (mutable-set))
+  (define out '())
+  (for ([c (append (if (list? primary) primary '())
+                    (if (list? secondary) secondary '()))]
+        #:break (>= (length out) limit)
+        #:when (hash? c))
+    (define key (string-downcase (format "~a" (hash-ref c 'name ""))))
+    (unless (or (equal? key "") (set-member? seen key))
+      (set-add! seen key)
+      (set! out (cons c out))))
+  (reverse out))
+
 (define (fetch-other-characters #:config [config (current-config)]
                                 #:limit [limit 40]
-                                #:exclude [exclude '()])
-  (with-handlers ([exn:fail? (lambda (_exn) '())])
-    (define response (get-character-leaderboard #:size (min limit 100) #:config config))
-    (define entries (as-list (response-data response)))
-    (define exclude-set (list->set (map (lambda (n) (string-downcase (format "~a" n))) exclude)))
-    (define names
-      (for/list ([e entries]
-                 #:when (leaderboard-name e)
-                 #:unless (set-member? exclude-set
-                                      (string-downcase (format "~a" (leaderboard-name e)))))
-        (leaderboard-name e)))
-    (define limited (if (> (length names) limit) (take names limit) names))
-    (filter values
-            (for/list ([name limited])
-              (with-handlers ([exn:fail? (lambda (_exn) #f)])
-                (define char (response-data (get-character name #:config config)))
-                (other-character-visual name char))))))
+                                #:exclude [exclude '()]
+                                #:force? [force? #f])
+  (define now (current-seconds))
+  (define from-realtime (realtime-other-visuals #:exclude exclude #:limit limit))
+  (cond
+    [(and (not force?)
+          (pair? session-others)
+          (< (- now session-others-fetched-at) session-others-ttl-seconds))
+     (merge-other-characters from-realtime session-others #:limit limit)]
+    [else
+     (define fresh
+       (with-handlers ([exn:fail? (lambda (_exn) session-others)])
+         (define response (get-character-leaderboard #:size (min limit 100) #:config config))
+         (define entries (as-list (response-data response)))
+         (define exclude-set
+           (list->set (map (lambda (n) (string-downcase (format "~a" n))) exclude)))
+         (define names
+           (for/list ([e entries]
+                      #:when (leaderboard-name e)
+                      #:unless (set-member? exclude-set
+                                           (string-downcase (format "~a" (leaderboard-name e)))))
+             (leaderboard-name e)))
+         (define limited (if (> (length names) limit) (take names limit) names))
+         (filter values
+                 (for/list ([name limited])
+                   (with-handlers ([exn:fail? (lambda (_exn) #f)])
+                     (define char (response-data (get-character name #:config config)))
+                     (other-character-visual name char))))))
+     (set! session-others fresh)
+     (set! session-others-fetched-at now)
+     (merge-other-characters from-realtime fresh #:limit limit)]))
 
 (define (raid-visual-record raid)
   (and (hash? raid)
@@ -393,6 +465,22 @@
     [(task-trade) (action-task-trade character p #:config config)]
     [else (error 'player.action "unsupported action ~v" action-name)]))
 
+
+(define (cooldown-from-action-response response)
+  (define data
+    (cond
+      [(and (hash? response) (hash-has-key? response 'data))
+       (hash-ref response 'data)]
+      [else response]))
+  (cond
+    [(not (hash? data)) #f]
+    [(hash-ref data 'cooldown_expiration #f)]
+    [(let ([ch (hash-ref data 'character #f)])
+       (and (hash? ch) (hash-ref ch 'cooldown_expiration #f)))]
+    [(let ([cd (hash-ref data 'cooldown #f)])
+       (and (number? cd) (> cd 0) cd))]
+    [else #f]))
+
 (define (handle-player-action! data)
   (define character (and (hash? data) (hash-ref data 'character #f)))
   (define action-name (symbolish (and (hash? data) (hash-ref data 'action #f))))
@@ -428,11 +516,13 @@
                                      #:ok #f
                                      #:error-code 500
                                      #:message (exn-message exn))))])
-       (dispatch-player-action! (format "~a" character) action-name payload)
+       (define response
+         (dispatch-player-action! (format "~a" character) action-name payload))
        (visualizer-publish!
         (action-result-message character action-name
                                #:ok #t
-                               #:message "ok"))
+                               #:message "ok"
+                               #:cooldown (cooldown-from-action-response response)))
        (session-refresh-account!)
        (session-publish-snapshot!)
        (session-publish-logs!))]))
@@ -461,7 +551,8 @@
       [("ui.subscribe")
        (session-publish-status!)
        (when (session-authenticated?)
-         (session-publish-snapshot!))]
+         (session-publish-snapshot!)
+         (session-publish-logs!))]
       [else
        (printf "Visualizer ignored unknown command type: ~a\n" type)
        (flush-output)])))
@@ -498,6 +589,12 @@
   (set! session-stop? #f)
   (unless (and session-poll-thread (thread-running? session-poll-thread))
     (set! session-poll-thread (thread (lambda () (poll-loop poll-seconds)))))
+  ;; Prefer official realtime when ARTIFACTS_REALTIME=1; REST poll remains source of truth.
+  (start-realtime-ingest!
+   #:config (if (session-authenticated?) (session-config #:base config) config)
+   #:on-online (lambda (_chars)
+                 (when (session-authenticated?)
+                   (session-publish-snapshot!))))
   (session-publish-status!)
   (when (session-authenticated?)
     (session-refresh-account!)
@@ -507,6 +604,8 @@
 (define (stop-session-service!)
   (set! session-stop? #t)
   (set! session-poll-thread #f)
+  (stop-realtime-ingest!)
+  (set-realtime-online-handler! #f)
   (session-owns-snapshots? #f)
   (bot-route-overlay '())
   (set-visualizer-command-handler! #f)

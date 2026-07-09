@@ -22,11 +22,16 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - `artifacts/scheduler.rkt`: cooldown-aware job ordering primitives.
 - `artifacts/lang/runtime.rkt`: `#lang artifacts` specs, action validation, and first executor mappings into the HTTP layer.
 
+## 3D client bridge usage
+
+- Standalone bridge (`examples/artifacts-3d-bridge.rkt`) polls official REST and publishes `world.snapshot` / `session.status` over local WS.
+- Manual play actions from Godot map 1:1 onto the character action wrappers above.
+- Other players: public `get-character-leaderboard` + `get-character` (marked `other: true` in snapshots).
+- Optional official realtime URL is configured; enable with `ARTIFACTS_REALTIME=1` (REST polling remains the supported live path).
+
 ## Remaining Gaps
 
-- Fetch-all pagination helpers that walk every page for encyclopedia and account collections.
-- WebSocket client and event stream ingestion.
-- Cooldown/rate-limit state that updates from live action responses.
-- A scheduler loop that connects character jobs to HTTP actions and next-ready timing.
+- Full official realtime WebSocket ingest beyond the opt-in client (REST polling is the production path).
+- Cooldown/rate-limit state that updates from live action responses into a shared scheduler clock.
 - Fight matchup scoring that combines API simulation, local combat math, and equipment choices.
-- Full `#lang` strategy execution beyond validated action dispatch.
+- Fuller `#lang` strategy execution beyond validated action dispatch and the competitive planner.

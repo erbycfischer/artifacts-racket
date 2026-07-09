@@ -1,7 +1,9 @@
 #lang racket
 
-;; Optional local WebSocket hub for the Godot visualizer.
-;; Bots never depend on Godot. If no client is connected, publishes are no-ops.
+;; Local WebSocket hub for the official Artifacts custom 3D client.
+;; Bridge/session owns world.snapshot from official API. Bot publishes are
+;; optional overlays only. Bots never depend on Godot; disconnected clients
+;; make publishes no-ops.
 
 (require json
          net/rfc6455
@@ -225,7 +227,7 @@
 
 (define (connection-handler c _state)
   (add-client! c)
-  (printf "Visualizer client connected (~a total).\n" (length (snapshot-clients)))
+  (printf "3D client connected (~a total).\n" (length (snapshot-clients)))
   (flush-output)
   (let loop ()
     (define msg (ws-recv c #:payload-type 'text))
@@ -233,13 +235,13 @@
       [(eof-object? msg)
        (remove-client! c)
        (with-handlers ([exn:fail? void]) (ws-close! c))
-       (printf "Visualizer client disconnected (~a total).\n" (length (snapshot-clients)))
+       (printf "3D client disconnected (~a total).\n" (length (snapshot-clients)))
        (flush-output)]
       [else
        (when command-handler
          (with-handlers ([exn:fail?
                           (lambda (exn)
-                            (printf "Visualizer command error: ~a\n" (exn-message exn))
+                            (printf "3D bridge command error: ~a\n" (exn-message exn))
                             (flush-output))])
            (command-handler msg)))
        (loop)])))
@@ -265,11 +267,11 @@
                                #:enabled? [enabled? (visualizer-enabled?)])
   (cond
     [(not enabled?)
-     (printf "Visualizer hub disabled (ARTIFACTS_VISUALIZER=0).\n")
+     (printf "3D bridge disabled (ARTIFACTS_VISUALIZER=0).\n")
      (flush-output)
      #f]
     [(hub-alive?)
-     (printf "Visualizer hub already running on ~a.\n" (or hub-port port))
+     (printf "3D bridge already running on ~a.\n" (or hub-port port))
      (flush-output)
      #t]
     [else
@@ -280,14 +282,14 @@
      (with-handlers
          ([exn:fail?
            (lambda (exn)
-             (printf "Visualizer hub not started: ~a\n" (exn-message exn))
+             (printf "3D bridge not started: ~a\n" (exn-message exn))
              (printf "Bots continue without Godot.\n")
              (flush-output)
              #f)])
        (set! hub-stopper (ws-serve #:port port #:listen-ip "127.0.0.1" connection-handler))
        (set! hub-thread (thread publisher-loop))
        (set! hub-port port)
-       (printf "Visualizer hub listening on ws://127.0.0.1:~a (optional).\n" port)
+       (printf "3D bridge listening on ws://127.0.0.1:~a (optional).\n" port)
        (flush-output)
        #t)]))
 

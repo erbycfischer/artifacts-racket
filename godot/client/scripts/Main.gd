@@ -38,6 +38,11 @@ func _unhandled_input(event: InputEvent) -> void:
 		elif event.keycode == KEY_F:
 			_follow_character = true
 			_follow_selected_character()
+		elif event.keycode in [KEY_W, KEY_A, KEY_S, KEY_D, KEY_UP, KEY_DOWN, KEY_LEFT, KEY_RIGHT]:
+			# WASD / arrows pan: clear follow so camera stays under player control.
+			_follow_character = false
+			if camera_rig.has_method("clear_follow"):
+				camera_rig.call("clear_follow")
 
 
 func _connect_signals() -> void:
@@ -73,8 +78,8 @@ func _load_settings() -> void:
 	_fixtures_only = bool(cfg.get_value("connection", "fixtures_only", false))
 	state_client.call("set_websocket_url", url)
 	ui_root.call("set_host_url", url)
-	if ui_root.has_method("fixtures_only") == false:
-		pass
+	if ui_root.has_method("set_fixtures_only"):
+		ui_root.call("set_fixtures_only", _fixtures_only)
 
 
 func _save_settings() -> void:
@@ -133,9 +138,9 @@ func _on_protocol_message(message: Dictionary) -> void:
 		var status: Variant = visual_state.get("session_status")
 		var authenticated := status is Dictionary and bool(status.get("authenticated", false))
 		if authenticated:
-			ui_root.call("set_mode", "Playing", "hub streaming")
+			ui_root.call("set_mode", "Playing", "official session live")
 		else:
-			ui_root.call("set_mode", "Live", "hub streaming")
+			ui_root.call("set_mode", "Unauthenticated", "hub live; auth to play")
 	visual_state.call("apply_message", message)
 
 
@@ -166,17 +171,19 @@ func _on_account_logs(entries: Array) -> void:
 
 
 func _on_character_selected(character_name: String) -> void:
+	# Keep bridge selection in sync when VisualState auto-picks first character.
+	if _live_connected and not character_name.is_empty():
+		state_client.call("send_command", {
+			"type": "player.select",
+			"data": {"character": character_name},
+		})
 	_follow_selected_character()
 
 
 func _on_ui_character_selected(character_name: String) -> void:
-	visual_state.call("select_character", character_name)
-	state_client.call("send_command", {
-		"type": "player.select",
-		"data": {"character": character_name},
-	})
 	_follow_character = true
-	_follow_selected_character()
+	visual_state.call("select_character", character_name)
+	# player.select is sent from _on_character_selected to avoid duplicates
 	ui_root.call("set_characters_from_snapshot", visual_state.get("characters"))
 
 
@@ -201,6 +208,13 @@ func _on_auth_requested(token: String) -> void:
 
 func _on_logout_requested() -> void:
 	state_client.call("send_command", {"type": "session.logout", "data": {}})
+	visual_state.set("session_status", {})
+	visual_state.set("selected_character", "")
+	visual_state.set("last_action_result", {})
+	visual_state.set("account_logs", [])
+	ui_root.call("set_session_status", {"authenticated": false, "selected": "", "characters": [], "error": null})
+	ui_root.call("set_mode", "Unauthenticated", "logged out")
+	ui_root.call("set_characters_from_snapshot", visual_state.get("characters"))
 
 
 func _on_action_requested(action_name: String, payload: Dictionary) -> void:

@@ -10,9 +10,9 @@
 
 ## Learned Workspace Facts
 
-- The durable project lives in `/home/dirt/artifacts-racket` (public GitHub `erbycfischer/artifacts-mmo-3d-visualizer`); Cursor often opens the sibling stub `/home/dirt/artifcacts-mmo-ai-3d-visualizer`, which is not the monorepo.
-- The project is a Racket-first Artifacts MMO bot framework with `#lang artifacts`, bot scheduling/optimization, and a Godot 4/GDScript 3D visualizer.
-- The Godot visualizer project lives under `godot/client`, with `project.godot` as that subdirectory's project root; open it with `godot --path godot/client` from `artifacts-racket`.
+- The durable project lives in `/home/dirt/artifacts-racket` (public GitHub `erbycfischer/artifacts-mmo-3d-visualizer`); Cursor often opens the sibling stub `/home/dirt/artifcacts-mmo-ai-3d-visualizer`, which is not the monorepo and must not be treated as the live client.
+- The project is a Racket-first Artifacts MMO bot framework plus a **custom 3D client** for the official game (not a clone): `#lang artifacts`, bot scheduling/optimization, and a Godot 4 alternate visual client for the same live API.
+- The Godot 3D client lives under `godot/client`, with `project.godot` as that subdirectory's project root; open it with `godot --path godot/client` from `artifacts-racket`. Standalone bridge: `racket examples/artifacts-3d-bridge.rkt` (`visualizer-hub.rkt` is a compatibility alias).
 - `#lang artifacts` bots run through a planner/runner loop; dry-run works without credentials, and live play reads `ARTIFACTS_API_TOKEN` (preferred; GitHub Actions secret name) or falls back to `ARTIFACTS_TOKEN`.
 - Artifacts MMO HTTP auth uses `Authorization: Bearer <token>`; invalid or missing auth can return status 452 (see https://docs.artifactsmmo.com/api_guide/authorization/).
-- The visualizer hub/protocol is separate from bot runtime so any player or bot can be watched or controlled in 3D without embedding visualization logic in bots.
+- The local bridge/protocol is separate from bot runtime: any official player or bot is watchable via official character state with zero bot-side visualization hooks; optional `bot.decision` overlays are niceties only.
