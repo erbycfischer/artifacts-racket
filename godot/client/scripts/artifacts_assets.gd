@@ -51,18 +51,22 @@ static func tile_material(skin: String) -> StandardMaterial3D:
 	if _materials.has(key):
 		return _materials[key]
 	var mat := StandardMaterial3D.new()
-	mat.roughness = 0.95
+	mat.roughness = 0.92
 	mat.metallic = 0.0
-	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	mat.texture_filter = BaseMaterial3D.TEXTURE_FILTER_LINEAR_WITH_MIPMAPS
 	mat.uv1_scale = Vector3(1, 1, 1)
+	# Soft tint so overlapping cells blend instead of hard board edges.
+	mat.albedo_color = skin_base_color(skin_key).lightened(0.08)
 	var tex := map_texture(skin_key)
 	if tex != null:
 		mat.albedo_texture = tex
 		_watch(tex, mat)
-	else:
-		mat.albedo_color = _skin_fallback_color(skin_key)
 	_materials[key] = mat
 	return mat
+
+
+static func skin_base_color(skin: String) -> Color:
+	return _skin_fallback_color(skin)
 
 
 static func billboard_material(tex: Texture2D, fallback: Color) -> StandardMaterial3D:

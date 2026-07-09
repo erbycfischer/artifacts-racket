@@ -6,7 +6,7 @@ const ArtifactsAssets = preload("res://scripts/artifacts_assets.gd")
 @export var tile_size := 2.0
 @export var show_routes := true
 @export var show_market_signals := true
-@export var ground_thickness := 0.08
+@export var ground_thickness := 0.12
 
 var _route_material: StandardMaterial3D
 var _event_material: StandardMaterial3D
@@ -14,8 +14,10 @@ var _raid_material: StandardMaterial3D
 var _decision_material: StandardMaterial3D
 var _market_material: StandardMaterial3D
 var _cooldown_material: StandardMaterial3D
-var _mine_tint := Color(0.15, 0.9, 1.0)
+var _shadow_mat: StandardMaterial3D
+var _mine_tint := Color(0.2, 0.85, 0.95)
 var _other_tint := Color(1.0, 0.72, 0.25)
+var _body_mats: Dictionary = {}
 
 
 func _ready() -> void:
@@ -25,6 +27,10 @@ func _ready() -> void:
 	_decision_material = _make_material(Color(0.2, 0.95, 0.75, 0.9), true)
 	_market_material = _make_material(Color(0.95, 0.8, 0.2))
 	_cooldown_material = _make_material(Color(0.35, 0.55, 1.0, 0.7), true)
+	_shadow_mat = StandardMaterial3D.new()
+	_shadow_mat.albedo_color = Color(0.02, 0.03, 0.02, 0.4)
+	_shadow_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+	_shadow_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
 
 
 func render_state(state: Node) -> void:
@@ -54,39 +60,45 @@ func _render_characters(characters: Array, decisions: Dictionary) -> void:
 		add_child(root)
 
 		var is_other := bool(character.get("other", false))
+		var tint := _other_tint if is_other else _mine_tint
 		var skin := str(character.get("skin", "men1"))
-		var tex := ArtifactsAssets.character_texture(skin)
-		var mat := ArtifactsAssets.billboard_material(tex, _other_tint if is_other else _mine_tint)
 
-		var sprite := MeshInstance3D.new()
-		var quad := QuadMesh.new()
-		quad.size = Vector2(0.95, 1.2)
-		sprite.mesh = quad
-		sprite.material_override = mat
-		sprite.position = Vector3(0.0, ground_thickness + 0.7, 0.0)
-		root.add_child(sprite)
+		# Ground contact shadow / decal
+		var shadow := MeshInstance3D.new()
+		var disc := CylinderMesh.new()
+		disc.top_radius = 0.38
+		disc.bottom_radius = 0.38
+		disc.height = 0.03
+		shadow.mesh = disc
+		shadow.position.y = ground_thickness + 0.02
+		shadow.material_override = _shadow_mat
+		root.add_child(shadow)
 
-		# Ground disc so characters read as standing on a cell.
-		var disc := MeshInstance3D.new()
-		var cyl := CylinderMesh.new()
-		cyl.top_radius = 0.35
-		cyl.bottom_radius = 0.35
-		cyl.height = 0.04
-		disc.mesh = cyl
-		disc.position.y = ground_thickness + 0.03
-		var disc_mat := StandardMaterial3D.new()
-		disc_mat.albedo_color = _other_tint if is_other else _mine_tint
-		disc_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
-		disc_mat.albedo_color.a = 0.55
-		disc.material_override = disc_mat
-		root.add_child(disc)
+		# Soft team ring under feet
+		var ring := MeshInstance3D.new()
+		var ring_mesh := TorusMesh.new()
+		ring_mesh.inner_radius = 0.32
+		ring_mesh.outer_radius = 0.4
+		ring.mesh = ring_mesh
+		ring.rotation_degrees = Vector3(90, 0, 0)
+		ring.position.y = ground_thickness + 0.04
+		var ring_mat := StandardMaterial3D.new()
+		ring_mat.albedo_color = Color(tint.r, tint.g, tint.b, 0.65)
+		ring_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		ring_mat.emission_enabled = true
+		ring_mat.emission = tint
+		ring_mat.emission_energy_multiplier = 0.6
+		ring.material_override = ring_mat
+		root.add_child(ring)
+
+		_add_character_figure(root, tint, skin)
 
 		var label := Label3D.new()
 		var name := str(character.get("name", "char"))
 		label.text = ("[world] %s" % name) if is_other else name
 		label.font_size = 22
 		label.outline_size = 8
-		label.position = Vector3(0.0, ground_thickness + 1.45, 0.0)
+		label.position = Vector3(0.0, ground_thickness + 1.85, 0.0)
 		label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		root.add_child(label)
 
@@ -97,6 +109,78 @@ func _render_characters(characters: Array, decisions: Dictionary) -> void:
 		var decision: Variant = decisions.get(str(character.get("name", "")), {})
 		if decision is Dictionary and not decision.is_empty() and not is_other:
 			_add_decision_pulse(root, decision)
+
+
+func _add_character_figure(root: Node3D, tint: Color, skin: String) -> void:
+	var body_mat := _body_mat("body_%s" % skin, tint)
+	var skin_mat := _body_mat("skin_%s" % skin, Color(0.85, 0.68, 0.55).lerp(tint, 0.15))
+
+	# Legs
+	for side in [-1.0, 1.0]:
+		var leg := MeshInstance3D.new()
+		var cyl := CylinderMesh.new()
+		cyl.top_radius = 0.08
+		cyl.bottom_radius = 0.09
+		cyl.height = 0.35
+		leg.mesh = cyl
+		leg.position = Vector3(side * 0.1, ground_thickness + 0.22, 0.0)
+		leg.material_override = body_mat.duplicate()
+		(leg.material_override as StandardMaterial3D).albedo_color = tint.darkened(0.25)
+		root.add_child(leg)
+
+	# Torso capsule
+	var torso := MeshInstance3D.new()
+	var capsule := CapsuleMesh.new()
+	capsule.radius = 0.2
+	capsule.height = 0.7
+	torso.mesh = capsule
+	torso.position.y = ground_thickness + 0.7
+	torso.material_override = body_mat
+	root.add_child(torso)
+
+	# Arms
+	for side in [-1.0, 1.0]:
+		var arm := MeshInstance3D.new()
+		var arm_mesh := CapsuleMesh.new()
+		arm_mesh.radius = 0.06
+		arm_mesh.height = 0.4
+		arm.mesh = arm_mesh
+		arm.position = Vector3(side * 0.28, ground_thickness + 0.75, 0.0)
+		arm.rotation_degrees = Vector3(0.0, 0.0, side * 18.0)
+		arm.material_override = body_mat
+		root.add_child(arm)
+
+	# Head
+	var head := MeshInstance3D.new()
+	var sphere := SphereMesh.new()
+	sphere.radius = 0.16
+	sphere.height = 0.32
+	head.mesh = sphere
+	head.position.y = ground_thickness + 1.2
+	head.material_override = skin_mat
+	root.add_child(head)
+
+	# Official skin texture as small face plate / accent (not full billboard body)
+	var tex := ArtifactsAssets.character_texture(skin)
+	if tex != null:
+		var face := MeshInstance3D.new()
+		var quad := QuadMesh.new()
+		quad.size = Vector2(0.42, 0.55)
+		face.mesh = quad
+		face.material_override = ArtifactsAssets.billboard_material(tex, tint)
+		face.position = Vector3(0.0, ground_thickness + 1.35, 0.28)
+		root.add_child(face)
+
+
+func _body_mat(key: String, color: Color) -> StandardMaterial3D:
+	if _body_mats.has(key):
+		return _body_mats[key]
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.roughness = 0.7
+	mat.metallic = 0.05
+	_body_mats[key] = mat
+	return mat
 
 
 func _add_cooldown_ring(parent: Node3D, cooldown: float) -> void:
@@ -115,8 +199,8 @@ func _add_cooldown_ring(parent: Node3D, cooldown: float) -> void:
 func _add_decision_pulse(parent: Node3D, decision: Dictionary) -> void:
 	var pulse := MeshInstance3D.new()
 	var torus := TorusMesh.new()
-	torus.inner_radius = 0.4
-	torus.outer_radius = 0.5
+	torus.inner_radius = 0.42
+	torus.outer_radius = 0.52
 	pulse.mesh = torus
 	pulse.material_override = _decision_material
 	pulse.position = Vector3(0.0, ground_thickness + 0.1, 0.0)
@@ -127,7 +211,7 @@ func _add_decision_pulse(parent: Node3D, decision: Dictionary) -> void:
 	label.text = str(decision.get("action", "?"))
 	label.font_size = 18
 	label.outline_size = 6
-	label.position = Vector3(0.0, ground_thickness + 1.7, 0.0)
+	label.position = Vector3(0.0, ground_thickness + 2.05, 0.0)
 	label.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 	parent.add_child(label)
 
@@ -148,13 +232,13 @@ func _render_routes(routes: Array) -> void:
 
 
 func _add_route_segment(a: Dictionary, b: Dictionary) -> void:
-	var start := _grid_to_world(a) + Vector3(0.0, ground_thickness + 0.06, 0.0)
-	var end := _grid_to_world(b) + Vector3(0.0, ground_thickness + 0.06, 0.0)
+	var start := _grid_to_world(a) + Vector3(0.0, ground_thickness + 0.08, 0.0)
+	var end := _grid_to_world(b) + Vector3(0.0, ground_thickness + 0.08, 0.0)
 	var mid := (start + end) * 0.5
 	var length := start.distance_to(end)
 	var mesh := MeshInstance3D.new()
 	var box := BoxMesh.new()
-	box.size = Vector3(0.18, 0.05, max(length, 0.1))
+	box.size = Vector3(0.14, 0.04, max(length, 0.1))
 	mesh.mesh = box
 	mesh.material_override = _route_material
 	mesh.position = mid
@@ -208,6 +292,8 @@ func _grid_to_world(tile: Dictionary) -> Vector3:
 			elevation = 2.2
 		"sky":
 			elevation = 4.0
+		_:
+			elevation = 0.0
 	return Vector3(x * tile_size, elevation, y * tile_size)
 
 
