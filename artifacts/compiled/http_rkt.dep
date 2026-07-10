@@ -1,1 +1,0 @@
-("9.2" ta6le ("872215a124cbbbdcb7cddd1003720d5682cf3da4" . "88dbaf2643d4a9e74421af1c1df8172fd996e685") (collects #"json" #"main.rkt") (collects #"multi" #"artifacts" #"config.rkt") (collects #"net" #"uri-codec.rkt") (collects #"net" #"url.rkt") (collects #"racket" #"main.rkt") (collects #"racket" #"runtime-config.rkt") (collects #"racket" #"string.rkt"))

@@ -20,7 +20,10 @@
          best-gather-resource
          role-skill
          character-first-goal
-         goal-preferred-actions)
+         goal-preferred-actions
+         when-low-hp
+         when-inventory-full
+         when-on-content)
 
 (struct planned-action (name payload reason priority) #:transparent)
 
@@ -78,6 +81,21 @@
   (and (hash? content)
        (equal? (hash-ref content 'type #f) type)
        (or (not code) (equal? (hash-ref content 'code #f) code))))
+
+;; Reactive goal conditions. Each answers true against a live character hash
+;; so a goal body can stay dormant until the world state warrants action.
+
+;; True when hp has dropped to at or below `ratio` of max (0..1).
+(define (when-low-hp char ratio)
+  (<= (hp-ratio char) ratio))
+
+;; True when inventory is at/over capacity minus `reserve` free slots.
+(define (when-inventory-full char #:reserve [reserve 1])
+  (inventory-full? char #:reserve reserve))
+
+;; True when the character stands on a tile whose content matches type/code.
+(define (when-on-content char type [code #f])
+  (on-content? char type code))
 
 (define (character-map char)
   (hasheq 'map_id (character-field char 'map_id)
@@ -227,12 +245,12 @@
          (and (<= distance 12)
               (move-to map "Intercept nearby active event." #:priority 80)))))
 
-(define (character-first-goal spec)
-  (for/or ([form (expand-guards (character-spec-forms spec))] #:when (goal-spec? form))
+(define (character-first-goal spec [char #f])
+  (for/or ([form (expand-guards (character-spec-forms spec) char)] #:when (goal-spec? form))
     form))
 
-(define (goal-preferred-actions spec)
-  (define goal (character-first-goal spec))
+(define (goal-preferred-actions spec [char #f])
+  (define goal (character-first-goal spec char))
   (if goal (goal-spec-actions goal) '()))
 
 (define (first-payload spec [default #hasheq()])

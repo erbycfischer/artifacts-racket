@@ -3,3 +3,12 @@
 .racket-home/
 
 *.gd.uid
+
+# Compiled Racket output
+compiled/
+*.zo
+*.dep
+
+# Local environment / secrets
+.env
+.env.local

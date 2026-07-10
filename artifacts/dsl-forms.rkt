@@ -18,20 +18,23 @@
 (struct goal-spec (target actions) #:transparent)
 (struct action-spec (name payload) #:transparent)
 
-;; A guard wraps a predicate thunk and a body of action/goal forms. When the
-;; predicate answers false at decision time, the guarded forms contribute
-;; nothing; when it answers true, the body runs as if inlined.
+;; A guard wraps a predicate and a body of action/goal forms. The predicate
+;; receives the live character and answers true/false at decision time: a false
+;; answer contributes nothing, a true answer inlines the wrapped body. The
+;; predicate is the single source of truth for whether the guarded forms run,
+;; so condition helpers (when-low-hp, when-inventory-full, when-on-content) and
+;; plain thunks all fit the same guard shape.
 (struct guard-spec (predicate forms) #:transparent)
 
-;; Flatten a list of character/goal forms so guards are resolved into the
-;; forms they wrap. A guard whose predicate is false contributes nothing; a
-;; true guard contributes its unwrapped body.
-(define (expand-guards forms)
+;; Flatten a list of character/goal forms so guards are resolved against the
+;; live `char`. A guard whose predicate is false contributes nothing; a true
+;; guard contributes its unwrapped body (its own guards resolved recursively).
+(define (expand-guards forms [char #f])
   (for/fold ([acc '()]) ([form (in-list forms)])
     (cond
       [(guard-spec? form)
-       (if ((guard-spec-predicate form))
-           (append (reverse (expand-guards (guard-spec-forms form))) acc)
+       (if ((guard-spec-predicate form) char)
+           (append (reverse (expand-guards (guard-spec-forms form) char)) acc)
            acc)]
       [else (cons form acc)])))
 

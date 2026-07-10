@@ -1,1 +1,0 @@
-("9.2" ta6le ("85cc062ea09f65352bc842a2dcf574dfe4d38dc1" . "3d2e938d2ac1b497a353fa6364d767da30da757a") (collects #"json" #"main.rkt") (collects #"multi" #"artifacts" #"config.rkt") (collects #"multi" #"artifacts" #"http.rkt") (collects #"multi" #"artifacts" #"world.rkt") (collects #"racket" #"file.rkt") (collects #"racket" #"main.rkt") (collects #"racket" #"runtime-config.rkt"))

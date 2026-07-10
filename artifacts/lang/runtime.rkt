@@ -4,6 +4,7 @@
          "../dispatch.rkt"
          "../dsl-forms.rkt"
          "../http.rkt"
+         "../planner.rkt"
          "../runner.rkt"
          "./actions.rkt"
          (for-syntax syntax/parse))
@@ -119,22 +120,53 @@
     [(character tag #:role role form ...)
      #'(make-character-spec 'tag 'role #f (list form ...))]))
 
-;; Guard a body of action/goal forms behind a predicate thunk. At decision
-;; time the predicate is evaluated; only when it answers true do the wrapped
-;; forms reach the planner. The predicate is quoted into a thunk so it runs
-;; later (per-tick) rather than at bot definition time.
+;; Guard a body of action/goal forms behind a predicate. At decision time the
+;; predicate is applied to the live character; only when it answers true do the
+;; wrapped forms reach the planner. The predicate runs per-tick, not at bot
+;; definition time, so it sees the freshest character state.
 (define-syntax (guard stx)
   (syntax-parse stx
     [(_ #:when predicate body ...)
-     #'(guard-spec (lambda () predicate) (list body ...))]
+     #'(guard-spec (lambda (char) predicate) (list body ...))]
     [(_ predicate body ...)
-     #'(guard-spec (lambda () predicate) (list body ...))]))
+     #'(guard-spec (lambda (char) predicate) (list body ...))]))
 
 ;; Repeat a body of forms n times, useful for "do this N times then stop".
 (define-syntax (repeat stx)
   (syntax-parse stx
     [(_ n body ...)
      #'(apply append (build-list n (lambda (_) (list body ...))))]))
+
+;; Reactive goal conditions. Each expands to a guard whose predicate is one of
+;; the planner's condition helpers, applied to the live character at decision
+;; time. They let a goal body stay dormant until the world warrants the action:
+;;
+;;   (when-low-hp 0.5 (rest))              ; rest only while hurt
+;;   (when-inventory-full (deposit-all))   ; bank only when full
+;;   (when-on-content "bank" (deposit-all)); deposit only standing at the bank
+;;
+;; They are thin syntax over guard-spec, so they compose with repeat/loop and
+;; resolve through the same expand-guards path as plain guards.
+(define-syntax (when-low-hp stx)
+  (syntax-parse stx
+    [(_ ratio body ...)
+     #'(guard-spec (lambda (char) (when-low-hp char ratio)) (list body ...))]))
+
+(define-syntax (when-inventory-full stx)
+  (syntax-parse stx
+    [(_ #:reserve reserve body ...)
+     #'(guard-spec (lambda (char) (when-inventory-full char #:reserve reserve)) (list body ...))]
+    [(_ body ...)
+     #'(guard-spec (lambda (char) (when-inventory-full char)) (list body ...))]))
+
+(define-syntax (when-on-content stx)
+  (syntax-parse stx
+    [(_ type #:code code body ...)
+     #'(guard-spec (lambda (char) (when-on-content char type code)) (list body ...))]
+    [(_ type code body ...)
+     #'(guard-spec (lambda (char) (when-on-content char type code)) (list body ...))]
+    [(_ type body ...)
+     #'(guard-spec (lambda (char) (when-on-content char type)) (list body ...))]))
 
 (define (pipeline name . actions)
   (unless (symbol? name)
@@ -150,7 +182,14 @@
 (define (goal target . body)
   (unless (symbol? target)
     (error 'goal "expected symbolic target, got ~v" target))
-  (goal-spec target (map (lambda (form) (ensure-action-spec 'goal form)) body)))
+  (goal-spec target (map (lambda (form) (ensure-goal-form 'goal form)) body)))
+
+;; A goal body may mix plain actions and guards/conditionals. Both are kept as
+;; specs; expand-guards resolves the guards against the live character later.
+(define (ensure-goal-form who form)
+  (cond
+    [(guard-spec? form) form]
+    [else (ensure-action-spec who form)]))
 
 (define (action name . payload)
   (unless (symbol? name)

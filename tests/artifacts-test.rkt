@@ -459,4 +459,63 @@
     (define twice (repeat 2 (gather) (deposit-all)))
     (check-equal? (length twice) 4)
     (check-equal? (map action-spec-name twice)
-                  '(gather bank-deposit-item gather bank-deposit-item))))
+                  '(gather bank-deposit-item gather bank-deposit-item)))
+
+
+  (test-case "when-low-hp answers against hp ratio"
+    (define hurt (hasheq 'hp 40 'max_hp 100))
+    (define healthy (hasheq 'hp 80 'max_hp 100))
+    (check-true (when-low-hp hurt 0.5))
+    (check-true (when-low-hp hurt 0.4))
+    (check-false (when-low-hp hurt 0.3))
+    (check-false (when-low-hp healthy 0.5))
+    (check-false (when-low-hp (hasheq 'hp 0 'max_hp 0) 0.5)))
+
+  (test-case "when-inventory-full answers against capacity minus reserve"
+    (define full (hasheq 'inventory_max_items 20 'inventory (list (hasheq 'code "a" 'quantity 20))))
+    (define near-full (hasheq 'inventory_max_items 20 'inventory (list (hasheq 'code "a" 'quantity 19))))
+    (define roomy (hasheq 'inventory_max_items 20 'inventory (list (hasheq 'code "a" 'quantity 10))))
+    (check-true (when-inventory-full full))
+    (check-true (when-inventory-full near-full))
+    (check-false (when-inventory-full roomy))
+    (check-true (when-inventory-full roomy #:reserve 11))
+    (check-false (when-inventory-full full #:reserve 0)))
+
+  (test-case "when-on-content answers against the tile under the character"
+    (define on-bank (hasheq 'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define on-resource (hasheq 'interactions (hasheq 'content (hasheq 'type "resource" 'code "copper_rocks"))))
+    (define nowhere (hasheq 'interactions (hasheq 'content #f)))
+    (check-true (when-on-content on-bank "bank"))
+    (check-true (when-on-content on-bank "bank" "bank"))
+    (check-false (when-on-content on-bank "bank" "bank_alt"))
+    (check-false (when-on-content on-bank "resource"))
+    (check-true (when-on-content on-resource "resource" "copper_rocks"))
+    (check-false (when-on-content nowhere "bank")))
+
+  (test-case "conditional guard contributes its action only when the condition holds"
+    (define hurt-char (hasheq 'hp 30 'max_hp 100 'cooldown 0 'inventory_max_items 20 'inventory (list) 'interactions (hasheq 'content #f)))
+    (define healthy-char (hasheq 'hp 90 'max_hp 100 'cooldown 0 'inventory_max_items 20 'inventory (list) 'interactions (hasheq 'content #f)))
+    (define low-hp-spec
+      (character-spec 'healer 'crafter #f
+                      (list (goal 'survive
+                                  (when-low-hp 0.5 (rest))))))
+    (check-equal? (length (goal-preferred-actions low-hp-spec hurt-char)) 1)
+    (check-equal? (action-spec-name (car (goal-preferred-actions low-hp-spec hurt-char))) 'rest)
+    (check-equal? (goal-preferred-actions low-hp-spec healthy-char) '())
+    (define packed (hasheq 'hp 90 'max_hp 100 'cooldown 0 'inventory_max_items 20 'inventory (list (hasheq 'code "a" 'quantity 20)) 'interactions (hasheq 'content #f)))
+    (define light (hasheq 'hp 90 'max_hp 100 'cooldown 0 'inventory_max_items 20 'inventory (list (hasheq 'code "a" 'quantity 5)) 'interactions (hasheq 'content #f)))
+    (define packed-spec
+      (character-spec 'mule 'crafter #f
+                      (list (goal 'haul
+                                  (when-inventory-full (deposit-all))))))
+    (check-equal? (length (goal-preferred-actions packed-spec packed)) 1)
+    (check-equal? (action-spec-name (car (goal-preferred-actions packed-spec packed)))
+                  'bank-deposit-item)
+    (check-equal? (goal-preferred-actions packed-spec light) '())
+    (define direct (guard-spec (lambda (char) (when-on-content char "bank"))
+                               (list (deposit-all))))
+    (define on-bank (hasheq 'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define not-bank (hasheq 'interactions (hasheq 'content #f)))
+    (check-equal? (length (expand-guards (list direct) on-bank)) 1)
+    (check-equal? (expand-guards (list direct) not-bank) '()))
+)

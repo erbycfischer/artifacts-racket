@@ -326,7 +326,6 @@
       (define label
         (if (equal? tag live-name) tag (format "~a (~a)" tag live-name)))
       (define role (character-spec-role spec))
-      (define preferred (goal-preferred-actions spec))
       (define live (find-character-by-name my-chars live-name))
       (cond
         [(not live)
@@ -337,6 +336,9 @@
            (if (and dry-run? (not (config-has-token? config)))
                live
                (enrich-character live #:config config)))
+         ;; Preferred goal actions are resolved against the live character so
+         ;; character-conditioned guards (when-low-hp, etc.) see real state.
+         (define preferred (goal-preferred-actions spec enriched))
          (define plan
            (plan-character enriched
                           world*

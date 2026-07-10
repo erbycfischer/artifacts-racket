@@ -1,1 +1,0 @@
-("9.2" ta6le ("00a8418acb2930b17ffe4df72a1a77bc097146eb" . "6fb2a425755fefa6d543f68f1ea10b8b7756bda6") (collects #"multi" #"artifacts" #"dsl-forms.rkt") (collects #"racket" #"main.rkt") (collects #"racket" #"runtime-config.rkt"))
