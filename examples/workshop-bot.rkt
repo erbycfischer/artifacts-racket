@@ -10,7 +10,7 @@
 (bot workshop
   (character smith #:role 'crafter #:as (env-as-name 'smith)
     (pipeline 'refine-loop
-      (craft 'copper_bar 1)
+      (craft #:code 'copper_bar #:qty 1)
       (deposit-all)
       (rest)))
   (character quartermaster #:role 'tasker #:as (env-as-name 'quartermaster)
@@ -20,8 +20,8 @@
       (deposit-all)))
   (character buyer #:role 'trader #:as (env-as-name 'buyer)
     (pipeline 'supply-run
-      (buy 'small_health_potion 3)
-      (sell 'copper_ore 5)
+      (buy #:code 'small_health_potion #:qty 3)
+      (sell #:code 'copper_ore #:qty 5)
       (deposit-all)))
   (strategy market-watch
     (scan-ge)

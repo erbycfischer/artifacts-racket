@@ -113,7 +113,7 @@
   (define-values (c q)
     (if (null? rest)
         (values code (or qty 1))
-        (values (car rest) (if (null? (cdr rest)) 1 (cadr rest))))))
+        (values (car rest) (if (null? (cdr rest)) 1 (cadr rest)))))
   (action-spec 'use (list (qty-item c q))))
 
 (define (move-to #:x [x #f] #:y [y #f] . rest)

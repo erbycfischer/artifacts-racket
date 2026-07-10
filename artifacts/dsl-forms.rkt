@@ -9,7 +9,8 @@
          character-spec-name
          character-spec-live-name
          normalize-account-name
-         expand-guards)
+         expand-guards
+         guard?)
 
 (struct bot-spec (name forms) #:transparent)
 (struct character-spec (tag role account-name forms) #:transparent)
@@ -33,6 +34,8 @@
            (append (reverse (expand-guards (guard-spec-forms form))) acc)
            acc)]
       [else (cons form acc)])))
+
+(define guard? guard-spec?)
 
 ;; Tag is the bot-local descriptor; account-name is the live Artifacts character.
 (define character-spec-name character-spec-tag)

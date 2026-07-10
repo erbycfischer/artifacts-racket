@@ -1,0 +1,1 @@
+("9.2" ta6le ("3388520fbb2fcf4c58246d376ea51a0a89a41eb3" . "53fd033a5f090b5fc8015102e53a27c2cd990996") (collects #"racket" #"runtime-config.rkt") (collects #"s-exp" #"lang" #"reader.rkt") (collects #"syntax" #"module-reader.rkt"))

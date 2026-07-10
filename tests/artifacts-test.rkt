@@ -7,6 +7,7 @@
          "../artifacts/config.rkt"
          "../artifacts/http.rkt"
          "../artifacts/lang/runtime.rkt"
+         "../artifacts/dsl-forms.rkt"
          "../artifacts/market.rkt"
          "../artifacts/scheduler.rkt"
          "../artifacts/world.rkt"
@@ -390,4 +391,72 @@
             #hasheq((name . "b") (cooldown . 9))))
     (define wait (suggested-loop-sleep chars #:base-seconds 2 #:min-seconds 1 #:max-seconds 15))
     (check-true (>= wait 2))
-    (check-true (<= wait 15))))
+    (check-true (<= wait 15)))
+
+  (test-case "keyword action builders produce correct specs"
+    (define b (buy #:code 'copper_ore #:qty 5))
+    (check-equal? (action-spec-name b) 'npc-buy)
+    (check-equal? (action-spec-payload b)
+                  (list (hasheq 'code "copper_ore" 'quantity 5)))
+    (define c (craft #:code 'copper_bar #:qty 1))
+    (check-equal? (action-spec-name c) 'craft)
+    (check-equal? (action-spec-payload c)
+                  (list (hasheq 'code "copper_bar" 'quantity 1)))
+    (define m (move-to #:x 1 #:y 0))
+    (check-equal? (action-spec-name m) 'move)
+    (check-equal? (action-spec-payload m)
+                  (list (hasheq 'x 1 'y 0)))
+    (define s (sell-on-ge #:code 'copper_ore #:qty 5 #:price 10))
+    (check-equal? (action-spec-name s) 'grand-exchange-create-sell-order)
+    (check-equal? (action-spec-payload s)
+                  (list (hasheq 'code "copper_ore" 'quantity 5 'price 10)))
+    (define sk (change-skin #:skin 'women3))
+    (check-equal? (action-spec-name sk) 'change-skin)
+    (check-equal? (action-spec-payload sk)
+                  (list (hasheq 'skin "women3"))))
+
+  (test-case "positional action builders still work"
+    (check-equal? (action-spec-name (buy 'copper_ore 5)) 'npc-buy)
+    (check-equal? (action-spec-name (craft 'copper_bar 1)) 'craft)
+    (check-equal? (action-spec-name (move-to 1 0)) 'move)
+    (check-equal? (action-spec-name (sell-on-ge 'copper_ore 5 10))
+                  'grand-exchange-create-sell-order))
+
+  (test-case "guard struct carries predicate and forms"
+    (define g (guard-spec (lambda () #t) (list (gather))))
+    (check-true (guard? g))
+    (check-pred procedure? (guard-spec-predicate g))
+    (check-equal? (length (guard-spec-forms g)) 1))
+
+  (test-case "true guard contributes its forms, false contributes none"
+    (define guarded-true
+      (character-spec 'smith 'crafter #f
+                      (list (guard #:when #t
+                                  (pipeline 'refine (craft #:code 'copper_bar #:qty 1))
+                                  (deposit-all)))))
+    (check-equal? (length (goal-preferred-actions guarded-true)) 2)
+    (define guarded-false
+      (character-spec 'smith 'crafter #f
+                      (list (guard #:when #f
+                                  (pipeline 'refine (craft #:code 'copper_bar #:qty 1))
+                                  (deposit-all)))))
+    (check-equal? (goal-preferred-actions guarded-false) '())
+    ;; Predicate thunks let the decision happen at evaluation time.
+    (define flips (guard-spec (lambda () (not #f)) (list (rest))))
+    (check-equal? (expand-guards (list flips)) (list (rest))))
+
+  (test-case "loop and routine still build goal specs"
+    (define lp (loop 'mine-forever (gather) (deposit-all)))
+    (check-true (goal-spec? lp))
+    (check-equal? (goal-spec-target lp) 'mine-forever)
+    (check-equal? (length (goal-spec-actions lp)) 2)
+    (define rt (routine 'patrol (fight) (rest)))
+    (check-true (goal-spec? rt))
+    (check-equal? (goal-spec-target rt) 'patrol)
+    (check-equal? (length (goal-spec-actions rt)) 2))
+
+  (test-case "repeat expands to n copies of the body"
+    (define twice (repeat 2 (gather) (deposit-all)))
+    (check-equal? (length twice) 4)
+    (check-equal? (map action-spec-name twice)
+                  '(gather bank-deposit-item gather bank-deposit-item))))

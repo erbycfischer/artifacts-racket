@@ -28,7 +28,7 @@
          ensure-characters
          play
          (all-from-out "./actions.rkt")
-         (struct-out guard-spec)
+         (all-from-out "../dsl-forms.rkt")
          (all-from-out "../core.rkt")
          (all-from-out "../runner.rkt"))
 
