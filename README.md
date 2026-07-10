@@ -4,7 +4,7 @@ Racket bot framework and `#lang artifacts` DSL for the **official** [Artifacts M
 
 This is **not a clone** or alternate ruleset. Bots talk only to the official Artifacts API. Your bearer token is your real account.
 
-The **3D visual client** is a separate git repo: [`artifacts-mmo-ai-3d-visualizer`](../artifacts-mmo-ai-3d-visualizer). Bots do not depend on it.
+The **3D visual client** is a separate git repo: [artifacts-mmo-ai-3d-visualizer](https://github.com/erbycfischer/artifacts-mmo-ai-3d-visualizer). Bots do not depend on it.
 
 ## What this repo is
 
