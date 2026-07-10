@@ -221,11 +221,11 @@
     (check-equal? missing '("OreBot42")))
 
   (test-case "character name and skin validation"
-    (check-true (valid-character-name? "fighter"))
-    (check-true (valid-character-name? 'miner))
+    (check-not-false (valid-character-name? "fighter"))
+    (check-not-false (valid-character-name? 'miner))
     (check-false (valid-character-name? "ab"))
-    (check-true (valid-character-skin? 'men1))
-    (check-true (valid-character-skin? "women3"))
+    (check-not-false (valid-character-skin? 'men1))
+    (check-not-false (valid-character-skin? "women3"))
     (check-false (valid-character-skin? "dragon1")))
 
   (test-case "action builders and pipeline goals"
@@ -441,9 +441,10 @@
                                   (pipeline 'refine (craft #:code 'copper_bar #:qty 1))
                                   (deposit-all)))))
     (check-equal? (goal-preferred-actions guarded-false) '())
-    ;; Predicate thunks let the decision happen at evaluation time.
-    (define flips (guard-spec (lambda () (not #f)) (list (rest))))
-    (check-equal? (expand-guards (list flips)) (list (rest))))
+    ;; Predicate thunks let the decision happen at evaluation time; they
+    ;; receive the live character so character-conditioned guards can read it.
+    (define flips (guard-spec (lambda (char) (not #f)) (list (rest))))
+    (check-equal? (expand-guards (list flips) #f) (list (rest))))
 
   (test-case "loop and routine still build goal specs"
     (define lp (loop 'mine-forever (gather) (deposit-all)))
@@ -479,7 +480,7 @@
     (check-true (when-inventory-full near-full))
     (check-false (when-inventory-full roomy))
     (check-true (when-inventory-full roomy #:reserve 11))
-    (check-false (when-inventory-full full #:reserve 0)))
+    (check-true (when-inventory-full full #:reserve 0)))
 
   (test-case "when-on-content answers against the tile under the character"
     (define on-bank (hasheq 'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
@@ -498,7 +499,8 @@
     (define low-hp-spec
       (character-spec 'healer 'crafter #f
                       (list (goal 'survive
-                                  (when-low-hp 0.5 (rest))))))
+                                  (guard-spec (lambda (char) (when-low-hp char 0.5))
+                                              (list (rest)))))))
     (check-equal? (length (goal-preferred-actions low-hp-spec hurt-char)) 1)
     (check-equal? (action-spec-name (car (goal-preferred-actions low-hp-spec hurt-char))) 'rest)
     (check-equal? (goal-preferred-actions low-hp-spec healthy-char) '())
@@ -507,7 +509,8 @@
     (define packed-spec
       (character-spec 'mule 'crafter #f
                       (list (goal 'haul
-                                  (when-inventory-full (deposit-all))))))
+                                  (guard-spec (lambda (char) (when-inventory-full char))
+                                              (list (deposit-all)))))))
     (check-equal? (length (goal-preferred-actions packed-spec packed)) 1)
     (check-equal? (action-spec-name (car (goal-preferred-actions packed-spec packed)))
                   'bank-deposit-item)

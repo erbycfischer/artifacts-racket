@@ -222,10 +222,10 @@
                         (payload-for-dispatch spec)
                         #:config config))
 
-(define (execute-goal character-name spec #:config [config (current-config)])
+(define (execute-goal character-name spec #:config [config (current-config)] #:char [char #f])
   (unless (goal-spec? spec)
     (error 'execute-goal "expected goal spec, got ~v" spec))
-  (for/list ([item (expand-guards (goal-spec-actions spec))])
+  (for/list ([item (expand-guards (goal-spec-actions spec) char)])
     (execute-action character-name item #:config config)))
 
 (define (ensure-characters bot

@@ -85,9 +85,13 @@
 ;; Reactive goal conditions. Each answers true against a live character hash
 ;; so a goal body can stay dormant until the world state warrants action.
 
-;; True when hp has dropped to at or below `ratio` of max (0..1).
+;; True when hp has dropped to at or below `ratio` of max (0..1). A character
+;; with no known max_hp can't be assessed, so it reads as "not low" rather than
+;; tripping the condition on a divide-by-zero ratio.
 (define (when-low-hp char ratio)
-  (<= (hp-ratio char) ratio))
+  (define max-hp (character-field char 'max_hp 0))
+  (and (not (zero? max-hp))
+       (<= (hp-ratio char) ratio)))
 
 ;; True when inventory is at/over capacity minus `reserve` free slots.
 (define (when-inventory-full char #:reserve [reserve 1])
@@ -246,12 +250,35 @@
               (move-to map "Intercept nearby active event." #:priority 80)))))
 
 (define (character-first-goal spec [char #f])
-  (for/or ([form (expand-guards (character-spec-forms spec) char)] #:when (goal-spec? form))
+  (for/or ([form (expand-guards (character-spec-forms spec) char)]
+           #:when (goal-spec? form))
     form))
 
+;; Flatten a list of goal/action forms into the bare action-specs the planner
+;; should prefer, resolving any nested guards against the live character.
+(define (forms->action-specs forms [char #f])
+  (apply append
+         (for/list ([form (expand-guards forms char)])
+           (cond
+             [(goal-spec? form) (forms->action-specs (goal-spec-actions form) char)]
+             [(action-spec? form) (list form)]
+             [else '()]))))
+
 (define (goal-preferred-actions spec [char #f])
-  (define goal (character-first-goal spec char))
-  (if goal (goal-spec-actions goal) '()))
+  ;; The character's preferred actions come from the first goal or guard body.
+  ;; A guard contributes its whole body only when its condition holds; a goal
+  ;; contributes its actions. Sibling actions inside that body all count, and
+  ;; guards nested deeper (e.g. (when-low-hp 0.5 (rest))) are resolved here.
+  (define result
+    (for/or ([form (character-spec-forms spec)])
+      (cond
+        [(guard-spec? form)
+         (and ((guard-spec-predicate form) char)
+              (forms->action-specs (guard-spec-forms form) char))]
+        [(goal-spec? form)
+         (forms->action-specs (goal-spec-actions form) char)]
+        [else #f])))
+  (if result result '()))
 
 (define (first-payload spec [default #hasheq()])
   (define payload (action-spec-payload spec))
