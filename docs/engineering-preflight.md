@@ -7,7 +7,7 @@ Read this before implementation work in `artifacts-racket`.
 - State the smallest useful change that satisfies the request.
 - Identify assumptions before relying on them; verify with local files or focused commands when possible.
 - Keep the Racket library and `#lang artifacts` as the source of truth. Do not move strategy logic into Godot.
-- Preserve scope boundaries. Bot work stays in `artifacts/` and `examples/`; visual client work stays in `client/`.
+- Preserve scope boundaries. Bot work stays in `artifacts/` and `examples/`; visual client work stays in the sibling `artifacts-mmo-ai-3d-visualizer` repo.
 - Prefer direct data structures, pure helpers, and focused tests before adding broad abstractions.
 - Keep imports at module tops and avoid inline imports.
 - Verify the changed behavior with RackUnit or targeted Racket commands. If `racket` or `raco` is missing, report that clearly.

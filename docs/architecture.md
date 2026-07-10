@@ -1,45 +1,27 @@
 # Architecture
 
-## Product identity
+Racket-first bot framework for the official Artifacts MMO.
 
-This repo has two separate pieces:
+## Two runtimes (two repos)
 
-1. **Racket bot framework** — `#lang artifacts`, planner, runner, official REST client.
-2. **3D visual client** (`client/`) — Godot shell + local bridge for manual play and watching.
-
-Both talk to the **official Artifacts MMO** only (`api.artifactsmmo.com`, optional `realtime.artifactsmmo.com`). Not a clone, private shard, or alternate economy.
+1. **Bot framework** (this repo) — REST client, planner, runner, `#lang artifacts`.
+2. **3D visual client** (`~/artifacts-mmo-ai-3d-visualizer`) — Godot shell + local bridge for manual play and watching.
 
 ```text
-Official web client ──┐
-Any bot (any language)─┼──► Artifacts REST / realtime
-Racket bots (#lang) ───┘              │
-                                      ▼
-3D visual bridge ─────────────────────┘
-        │
-        ▼
-Godot 3D client ◄── local WS (127.0.0.1:8787)
+#lang artifacts bots ──► Official Artifacts REST API
+                              ▲
+3D visual bridge ─────────────┘
 ```
 
-## Bot framework (`artifacts/`)
+Bots never import the visualizer. Watching bots in 3D is done by the visual client polling official character state.
 
-- REST client with bearer auth and structured API errors.
-- Rate-limit and cooldown accounting.
-- Public encyclopedia / world map cache (`world-cache.rkt`).
-- World graph indexing over `(layer, x, y)` and `map_id`.
-- Planner, scheduler, runner loop.
-- `#lang artifacts` DSL — headless only; **no Godot, no bridge, no WebSocket**.
+## Bot stack (`artifacts/`)
 
-Bots never import `client/`. Watching bots in 3D is done by the visual client polling official character state.
+- HTTP wrappers and auth (`http.rkt`, `config.rkt`)
+- World index + encyclopedia cache (`world.rkt`, `world-cache.rkt`)
+- Planner / runner / scheduler
+- `#lang artifacts` reader + runtime
 
-## 3D visual client (`client/`)
+## Sibling visualizer
 
-- Racket bridge: auth, poll account/world, dispatch manual `player.action` → official REST.
-- Local WebSocket hub for Godot (`client/bridge/visualizer.rkt` + `client/bridge/session.rkt`).
-- Godot: 3D tiles, camera, UI, character markers, manual play.
-- Optional realtime ingest (`ARTIFACTS_REALTIME=1`).
-
-Godot does not decide bot strategy. The bridge is visual-only.
-
-## Workspace note
-
-Develop here (`/home/dirt/artifacts-racket`). Ignore the misspelled stub `artifcacts-mmo-ai-3d-visualizer`.
+Develop bots here. Open Godot at `~/artifacts-mmo-ai-3d-visualizer/godot`.

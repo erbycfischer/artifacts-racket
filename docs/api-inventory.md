@@ -7,6 +7,7 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - Core request helpers: `api-get`, `api-post`, `request-url`, `request-headers`, `decode-api-response`, `api-error-from-response`.
 - Authentication guard: authenticated wrappers require a bearer token and raise a client-side `452` API error when the token is missing.
 - Account and character reads: account details, characters, bank, pending items, rate limits, and logs.
+- Account character writes: create and delete characters (`POST /characters/create`, `POST /characters/delete`).
 - Public encyclopedia reads: maps, map lookup, items, monsters, resources, NPC details/items, tasks, achievements, and effects.
 - Grand Exchange reads and account order/history reads.
 - Events, active events, raids, raid details, and raid leaderboard.
@@ -21,13 +22,15 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - `artifacts/market.rkt`: local Grand Exchange spread helpers.
 - `artifacts/scheduler.rkt`: cooldown-aware job ordering primitives.
 - `artifacts/world-cache.rkt`: encyclopedia and world map disk cache + `load-world-index`.
-- `artifacts/runner.rkt`: bot execution loop and planner dispatch.
+- `artifacts/runner.rkt`: bot execution loop, character provisioning, and planner dispatch.
 - `artifacts/planner.rkt`: role-based planning and cooldown helpers.
 - `artifacts/lang/runtime.rkt`: `#lang artifacts` specs, action validation, and executor mappings into the HTTP layer.
+- `artifacts/lang/actions.rkt`: readable action builders (`gather`, `buy`, `craft`, Grand Exchange helpers, etc.).
+- `artifacts/dispatch.rkt`: shared action dispatch for the runner and DSL executor.
 
-## 3D visual client (separate — `client/`)
+## 3D visual client (separate repo — `artifacts-mmo-ai-3d-visualizer`)
 
-- Bridge (`client/bridge.rkt`) polls official REST and publishes `world.snapshot` / `session.status` over local WS.
+- Bridge (`~/artifacts-mmo-ai-3d-visualizer/bridge.rkt`) polls official REST and publishes `world.snapshot` / `session.status` over local WS.
 - Manual play actions from Godot map 1:1 onto the character action wrappers in `artifacts/http.rkt`.
 - Other players: public `get-character-leaderboard` + `get-character` (marked `other: true` in snapshots).
 - Optional official realtime: `ARTIFACTS_REALTIME=1` on the bridge (REST polling remains the default path).
@@ -37,4 +40,4 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - Full official realtime WebSocket ingest in the visual client bridge (REST polling is the production path).
 - Cooldown/rate-limit state that updates from live action responses into a shared scheduler clock.
 - Fight matchup scoring that combines API simulation, local combat math, and equipment choices.
-- Fuller `#lang` strategy execution beyond validated action dispatch and the competitive planner.
+- Goal conditions (`when-low-hp`, inventory thresholds) beyond ordered action preference.

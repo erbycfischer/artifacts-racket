@@ -2,6 +2,4 @@
 .cursor/
 .racket-home/
 
-# Godot editor/cache
-client/godot/.godot/
 *.gd.uid
