@@ -3,5 +3,5 @@
 .racket-home/
 
 # Godot editor/cache
-godot/client/.godot/
+client/godot/.godot/
 *.gd.uid

@@ -34,7 +34,7 @@
       (job-ready-at item)))
   (and (pair? future) (apply min future)))
 
-;; Clamp wait so the loop stays responsive for visualizer publishes.
+;; Clamp wait so the loop stays responsive during cooldown polling.
 (define (suggested-wait-seconds jobs
                                 #:now [now (current-seconds)]
                                 #:min-seconds [min-seconds 1]

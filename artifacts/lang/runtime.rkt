@@ -175,13 +175,9 @@
               #:config [config (current-config)]
               #:iterations [iterations +inf.0]
               #:sleep-seconds [sleep-seconds 2]
-              #:dry-run? [dry-run? #f]
-              #:visualizer? [visualizer? (visualizer-enabled?)]
-              #:visualizer-port [visualizer-port 8787])
+              #:dry-run? [dry-run? #f])
   (run-bot-loop bot
                 #:config config
                 #:iterations iterations
                 #:sleep-seconds sleep-seconds
-                #:dry-run? dry-run?
-                #:visualizer? visualizer?
-                #:visualizer-port visualizer-port))
+                #:dry-run? dry-run?))

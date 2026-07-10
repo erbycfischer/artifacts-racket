@@ -2,54 +2,43 @@
 
 ## Product identity
 
-This monorepo ships a **custom 3D client** for the **official Artifacts MMO**, plus a Racket bot framework that talks to the same API.
+This repo has two separate pieces:
 
-- Source of truth: official Artifacts servers (`api.artifactsmmo.com`, optional `realtime.artifactsmmo.com`).
-- Not a clone, private shard, or alternate economy/ruleset.
-- Godot never calls Artifacts REST directly; the local Racket bridge owns auth, errors, and cooldowns.
+1. **Racket bot framework** — `#lang artifacts`, planner, runner, official REST client.
+2. **3D visual client** (`client/`) — Godot shell + local bridge for manual play and watching.
+
+Both talk to the **official Artifacts MMO** only (`api.artifactsmmo.com`, optional `realtime.artifactsmmo.com`). Not a clone, private shard, or alternate economy.
 
 ```text
 Official web client ──┐
 Any bot (any language)─┼──► Artifacts REST / realtime
-Racket 3D bridge ──────┘              │
+Racket bots (#lang) ───┘              │
                                       ▼
-Godot 3D client ◄── local WS (127.0.0.1:8787) ── Racket bridge
+3D visual bridge ─────────────────────┘
+        │
+        ▼
+Godot 3D client ◄── local WS (127.0.0.1:8787)
 ```
 
-## Principle
+## Bot framework (`artifacts/`)
 
-Racket is the source of truth for API access and (for bots) planning. Godot is the visual shell and manual-play surface.
-
-Artifacts is API-first and cooldown-bound, so the hard problems are planning and orchestration rather than rendering throughput.
-
-## Racket runtime
-
-- REST client and optional realtime ingest stub.
+- REST client with bearer auth and structured API errors.
 - Rate-limit and cooldown accounting.
-- Public encyclopedia / world map cache.
+- Public encyclopedia / world map cache (`world-cache.rkt`).
 - World graph indexing over `(layer, x, y)` and `map_id`.
-- Session service: auth, poll `get-my-characters`, maps, events, raids, other characters; publish `world.snapshot`.
-- Local WebSocket bridge for Godot (`artifacts/visualizer.rkt` + `artifacts/session.rkt`).
-- Bot planner/runner and `#lang artifacts` (optional; not required for 3D watch/play).
+- Planner, scheduler, runner loop.
+- `#lang artifacts` DSL — headless only; **no Godot, no bridge, no WebSocket**.
 
-## Godot runtime
+Bots never import `client/`. Watching bots in 3D is done by the visual client polling official character state.
 
-- 3D tile rendering, camera, UI.
-- Character markers (own vs other), paths, cooldown rings, event/raid overlays, market highlights.
-- Manual play: `player.action` → bridge → official REST.
-- Offline fixtures when the bridge is down.
+## 3D visual client (`client/`)
 
-Godot should not decide bot strategy. Optional `bot.decision` / `market.signal` overlays are niceties.
+- Racket bridge: auth, poll account/world, dispatch manual `player.action` → official REST.
+- Local WebSocket hub for Godot (`client/bridge/visualizer.rkt` + `client/bridge/session.rkt`).
+- Godot: 3D tiles, camera, UI, character markers, manual play.
+- Optional realtime ingest (`ARTIFACTS_REALTIME=1`).
 
-## Zero bot coupling
-
-- Bridge runs without any bot (`examples/artifacts-3d-bridge.rkt`).
-- Runner `visualizer-publish!` is optional overlay; `session-owns-snapshots?` prevents bots from owning world snapshots when the session service is active.
-- `ARTIFACTS_VISUALIZER=0` bots remain watchable via official character polling.
-
-## Runtime protocol
-
-Local WebSocket, envelope `{ type, timestamp, data }`. See [`visualizer.md`](visualizer.md).
+Godot does not decide bot strategy. The bridge is visual-only.
 
 ## Workspace note
 

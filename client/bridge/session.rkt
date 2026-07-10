@@ -7,13 +7,13 @@
 (require json
          racket/set
          racket/string
-         "config.rkt"
-         "http.rkt"
-         "planner.rkt"
+         "../../artifacts/config.rkt"
+         "../../artifacts/http.rkt"
+         "../../artifacts/planner.rkt"
+         "../../artifacts/world-cache.rkt"
+         "../../artifacts/world.rkt"
          "realtime.rkt"
-         "runner.rkt"
-         "visualizer.rkt"
-         "world.rkt")
+         "visualizer.rkt")
 
 (provide session-authenticated?
          session-selected
@@ -374,7 +374,7 @@
          (hasheq 'layer (hash-ref e 'layer "overworld")
                  'x (hash-ref e 'x 0)
                  'y (hash-ref e 'y 0)))))
-    (define routes (bot-route-overlay))
+    (define routes '())
     (define mine-names
       (for/list ([c chars] #:when (hash? c))
         (hash-ref c 'name #f)))
@@ -607,6 +607,5 @@
   (stop-realtime-ingest!)
   (set-realtime-online-handler! #f)
   (session-owns-snapshots? #f)
-  (bot-route-overlay '())
   (set-visualizer-command-handler! #f)
   (void))

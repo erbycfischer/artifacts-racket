@@ -7,7 +7,7 @@
 (require json
          net/rfc6455
          net/url
-         "config.rkt")
+         "../../artifacts/config.rkt")
 
 (provide realtime-enabled?
          realtime-url

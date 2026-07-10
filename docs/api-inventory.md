@@ -20,18 +20,21 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - `artifacts/world.rkt`: map indexing and nearest-content lookup over API-shaped map hashes.
 - `artifacts/market.rkt`: local Grand Exchange spread helpers.
 - `artifacts/scheduler.rkt`: cooldown-aware job ordering primitives.
-- `artifacts/lang/runtime.rkt`: `#lang artifacts` specs, action validation, and first executor mappings into the HTTP layer.
+- `artifacts/world-cache.rkt`: encyclopedia and world map disk cache + `load-world-index`.
+- `artifacts/runner.rkt`: bot execution loop and planner dispatch.
+- `artifacts/planner.rkt`: role-based planning and cooldown helpers.
+- `artifacts/lang/runtime.rkt`: `#lang artifacts` specs, action validation, and executor mappings into the HTTP layer.
 
-## 3D client bridge usage
+## 3D visual client (separate — `client/`)
 
-- Standalone bridge (`examples/artifacts-3d-bridge.rkt`) polls official REST and publishes `world.snapshot` / `session.status` over local WS.
-- Manual play actions from Godot map 1:1 onto the character action wrappers above.
+- Bridge (`client/bridge.rkt`) polls official REST and publishes `world.snapshot` / `session.status` over local WS.
+- Manual play actions from Godot map 1:1 onto the character action wrappers in `artifacts/http.rkt`.
 - Other players: public `get-character-leaderboard` + `get-character` (marked `other: true` in snapshots).
-- Optional official realtime URL is configured; enable with `ARTIFACTS_REALTIME=1` (REST polling remains the supported live path).
+- Optional official realtime: `ARTIFACTS_REALTIME=1` on the bridge (REST polling remains the default path).
 
 ## Remaining Gaps
 
-- Full official realtime WebSocket ingest beyond the opt-in client (REST polling is the production path).
+- Full official realtime WebSocket ingest in the visual client bridge (REST polling is the production path).
 - Cooldown/rate-limit state that updates from live action responses into a shared scheduler clock.
 - Fight matchup scoring that combines API simulation, local combat math, and equipment choices.
 - Fuller `#lang` strategy execution beyond validated action dispatch and the competitive planner.

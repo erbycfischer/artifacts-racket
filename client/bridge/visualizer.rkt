@@ -1,23 +1,20 @@
 #lang racket
 
-;; Local WebSocket hub for the official Artifacts custom 3D client.
-;; Bridge/session owns world.snapshot from official API. Bot publishes are
-;; optional overlays only. Bots never depend on Godot; disconnected clients
-;; make publishes no-ops.
+;; Local WebSocket hub for the official Artifacts custom 3D visual client.
+;; The bridge/session owns world.snapshot from official API polling.
+;; Bots never connect here — watch them via official character state.
 
 (require json
          net/rfc6455
          racket/async-channel
          racket/set)
 
-(provide visualizer-enabled?
-         hub-alive?
+(provide hub-alive?
          start-visualizer-hub!
          stop-visualizer-hub!
          visualizer-publish!
          set-visualizer-command-handler!
          session-owns-snapshots?
-         bot-route-overlay
          make-protocol-message
          world-snapshot-message
          bot-decision-message
@@ -41,19 +38,7 @@
 (define (set-visualizer-command-handler! handler)
   (set! command-handler handler))
 
-;; When a standalone session service is running, it owns world.snapshot publishes.
-;; Bots still publish decisions/routes/market; routes go through bot-route-overlay.
 (define session-owns-snapshots? (make-parameter #f))
-(define bot-route-overlay (make-parameter '()))
-
-
-
-(define (visualizer-enabled?)
-  (define v (getenv "ARTIFACTS_VISUALIZER"))
-  (cond
-    [(not v) #t]
-    [(member v '("0" "false" "FALSE" "no" "NO" "off" "OFF")) #f]
-    [else #t]))
 
 (define (iso-now)
   (define t (seconds->date (current-seconds) #f))
@@ -91,7 +76,6 @@
   (make-protocol-message
    "bot.decision"
    (if target (hash-set data 'target target) data)))
-
 
 (define (session-status-message-proto #:authenticated [authenticated #f]
                                       #:selected [selected #f]
@@ -187,7 +171,6 @@
           'content_code (if (hash? content) (hash-ref content 'code "") "")
           'interactions (if interactions interactions #hasheq())))
 
-;; Prefer tiles near characters/events/routes and tiles with gameplay content.
 (define (select-maps-for-visualizer maps
                                     #:focuses [focuses '()]
                                     #:limit [limit 400])
@@ -198,7 +181,6 @@
   (define selected
     (cond
       [(null? focuses)
-       ;; No focus: keep interesting content first, then fill.
        (define interesting (filter map-has-interesting-content? ranked))
        (define rest (filter (lambda (m) (not (map-has-interesting-content? m))) ranked))
        (append interesting rest)]
@@ -264,10 +246,10 @@
   (and hub-thread (thread-running? hub-thread)))
 
 (define (start-visualizer-hub! #:port [port default-port]
-                               #:enabled? [enabled? (visualizer-enabled?)])
+                               #:enabled? [enabled? #t])
   (cond
     [(not enabled?)
-     (printf "3D bridge disabled (ARTIFACTS_VISUALIZER=0).\n")
+     (printf "3D bridge disabled.\n")
      (flush-output)
      #f]
     [(hub-alive?)
@@ -275,7 +257,6 @@
      (flush-output)
      #t]
     [else
-     ;; Previous hub may have died; clear stale handles before retry.
      (when (or hub-thread hub-stopper)
        (with-handlers ([exn:fail? void])
          (stop-visualizer-hub!)))
@@ -283,13 +264,12 @@
          ([exn:fail?
            (lambda (exn)
              (printf "3D bridge not started: ~a\n" (exn-message exn))
-             (printf "Bots continue without Godot.\n")
              (flush-output)
              #f)])
        (set! hub-stopper (ws-serve #:port port #:listen-ip "127.0.0.1" connection-handler))
        (set! hub-thread (thread publisher-loop))
        (set! hub-port port)
-       (printf "3D bridge listening on ws://127.0.0.1:~a (optional).\n" port)
+       (printf "3D bridge listening on ws://127.0.0.1:~a\n" port)
        (flush-output)
        #t)]))
 

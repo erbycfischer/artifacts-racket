@@ -1,7 +1,6 @@
 #lang racket
 
 (require json
-         racket/file
          racket/string
          "config.rkt"
          "dsl-forms.rkt"
@@ -9,11 +8,10 @@
          "market.rkt"
          "planner.rkt"
          "scheduler.rkt"
-         "visualizer.rkt"
+         "world-cache.rkt"
          "world.rkt")
 
-(provide fetch-all-pages
-         load-world-index
+(provide load-world-index
          load-encyclopedia
          character-data
          enrich-character
@@ -23,111 +21,16 @@
          execute-planned-action
          route-for-plan
          ge-anchor-point
-         fetch-world-others
          cooldown-jobs-from-characters
          suggested-loop-sleep
          run-bot-once
-         run-bot-loop
-         (all-from-out "visualizer.rkt"))
+         run-bot-loop)
 
-(define (response-data response)
+(define (character-data response)
   (cond
     [(and (hash? response) (hash-has-key? response 'data))
      (hash-ref response 'data)]
     [else response]))
-
-(define (fetch-all-pages getter #:config [config (current-config)] #:size [size 100])
-  (let loop ([page 1] [acc '()])
-    (define response (getter #:page page #:size size #:config config))
-    (define data (response-data response))
-    (define items (if (list? data) data '()))
-    (define pages (and (hash? response) (hash-ref response 'pages #f)))
-    (define next (append acc items))
-    (cond
-      [(or (null? items)
-           (and (number? pages) (>= page pages))
-           (< (length items) size))
-       next]
-      [else (loop (add1 page) next)])))
-
-(define world-cache-seconds
-  (let ([v (getenv "ARTIFACTS_WORLD_CACHE_SECONDS")])
-    (or (and v (string->number v)) 900)))
-
-(define (world-cache-path)
-  (define root (or (getenv "ARTIFACTS_CACHE_DIR")
-                   (build-path (find-system-path 'temp-dir) "artifacts-racket-cache")))
-  (make-directory* root)
-  (build-path root "world-maps.json"))
-
-(define (read-world-cache)
-  (define path (world-cache-path))
-  (and (file-exists? path)
-       (< (- (current-seconds) (file-or-directory-modify-seconds path))
-          world-cache-seconds)
-       (with-handlers ([exn:fail? (lambda (_exn) #f)])
-         (define data (call-with-input-file path read-json))
-         (and (list? data) (pair? data) data))))
-
-(define (write-world-cache! maps)
-  (with-handlers ([exn:fail? (lambda (_exn) (void))])
-    (call-with-output-file (world-cache-path)
-      (lambda (out) (write-json maps out))
-      #:exists 'replace)))
-
-(define (load-world-index #:config [config (current-config)]
-                          #:use-cache? [use-cache? #t])
-  (define maps
-    (or (and use-cache? (read-world-cache))
-        (let ([fresh (fetch-all-pages get-maps #:config config #:size 100)])
-          (when use-cache?
-            (write-world-cache! fresh))
-          fresh)))
-  (build-world-index maps))
-
-(define encyclopedia-cache-seconds
-  (let ([v (getenv "ARTIFACTS_ENCYCLOPEDIA_CACHE_SECONDS")])
-    (or (and v (string->number v)) 900)))
-
-(define (encyclopedia-cache-path)
-  (define root (or (getenv "ARTIFACTS_CACHE_DIR")
-                   (build-path (find-system-path 'temp-dir) "artifacts-racket-cache")))
-  (make-directory* root)
-  (build-path root "encyclopedia.json"))
-
-(define (read-encyclopedia-cache)
-  (define path (encyclopedia-cache-path))
-  (and (file-exists? path)
-       (< (- (current-seconds) (file-or-directory-modify-seconds path))
-          encyclopedia-cache-seconds)
-       (with-handlers ([exn:fail? (lambda (_exn) #f)])
-         (define data (call-with-input-file path read-json))
-         (and (hash? data)
-              (hash-has-key? data 'monsters)
-              (hash-has-key? data 'resources)
-              data))))
-
-(define (write-encyclopedia-cache! data)
-  (with-handlers ([exn:fail? (lambda (_exn) (void))])
-    (call-with-output-file (encyclopedia-cache-path)
-      (lambda (out) (write-json data out))
-      #:exists 'replace)))
-
-(define (load-encyclopedia #:config [config (current-config)]
-                           #:use-cache? [use-cache? #t])
-  (or (and use-cache? (read-encyclopedia-cache))
-      (let ([fresh (hasheq 'monsters (fetch-all-pages get-monsters #:config config)
-                           'resources (fetch-all-pages get-resources #:config config)
-                           'items (fetch-all-pages get-items #:config config))])
-        (when use-cache?
-          (write-encyclopedia-cache! fresh))
-        fresh)))
-
-(define (character-data response)
-  (define data (response-data response))
-  (if (list? data)
-      data
-      (if (hash? data) data #hasheq())))
 
 (define (map-content-for-character char #:config [config (current-config)])
   (define layer (character-field char 'layer))
@@ -260,28 +163,6 @@
     [(raids) (get-raids #:config config)]
     [else (error 'execute-planned-action "unsupported planned action ~v" (planned-action-name plan))]))
 
-(define (character-visual-record char)
-  (define cd (cooldown-remaining char))
-  (define inv (character-field char 'inventory '()))
-  (define items (if (list? inv) inv '()))
-  (define used
-    (for/sum ([slot items] #:when (hash? slot))
-      (hash-ref slot 'quantity 0)))
-  (hasheq 'name (character-field char 'name)
-          'layer (or (character-field char 'layer) "overworld")
-          'x (or (character-field char 'x) 0)
-          'y (or (character-field char 'y) 0)
-          'map_id (character-field char 'map_id)
-          'hp (character-field char 'hp)
-          'max_hp (character-field char 'max_hp)
-          'gold (character-field char 'gold 0)
-          'level (character-field char 'level 1)
-          'inventory (hasheq 'used used
-                             'max (character-field char 'inventory_max_items 0)
-                             'slots (min 8 (length items)))
-          'cooldown cd
-          'on_cooldown (and (number? cd) (> cd 0))))
-
 (define (point-from-char char)
   (hasheq 'layer (or (character-field char 'layer) "overworld")
           'x (or (character-field char 'x) 0)
@@ -308,35 +189,6 @@
               (hasheq 'character name
                       'points (list (point-from-char char) dest))))))
 
-(define (orders-by-side orders side)
-  (for/list ([order orders]
-             #:when (and (hash? order)
-                         (equal? (hash-ref order 'type #f) side)))
-    order))
-
-(define (score-item-orders code orders)
-  (define buys (orders-by-side orders "buy"))
-  (define sells (orders-by-side orders "sell"))
-  (define spread (order-spread buys sells))
-  (define score (score-spread buys sells))
-  (and spread
-       score
-       (profitable-spread? buys sells #:minimum-margin 1)
-       (hasheq 'code code
-               'spread spread
-               'score score
-               'buy_depth (side-depth buys)
-               'sell_depth (side-depth sells))))
-
-(define (top-market-signals signals #:limit [limit 8])
-  (define ranked
-    (sort (filter values signals)
-          >
-          #:key (lambda (s) (hash-ref s 'score 0))))
-  (if (> (length ranked) limit)
-      (take ranked limit)
-      ranked))
-
 (define (ge-anchor-point world #:from [from #f])
   (define origin
     (or from #hasheq((layer . "overworld") (x . 0) (y . 0))))
@@ -347,155 +199,12 @@
                'x (hash-ref ge 'x 0)
                'y (hash-ref ge 'y 0))))
 
-(define (publish-signal-at! code spread score anchor)
-  (if (hash? anchor)
-      (visualizer-publish!
-       (market-signal-message code spread score
-                              #:x (hash-ref anchor 'x)
-                              #:y (hash-ref anchor 'y)
-                              #:layer (hash-ref anchor 'layer "overworld")))
-      (visualizer-publish!
-       (market-signal-message code spread score))))
-
-(define (publish-market-signals! #:config [config (current-config)]
-                                 #:dry-run? [dry-run? #f]
-                                 #:world [world #f]
-                                 #:from [from #f])
-  (define anchor (or (ge-anchor-point world #:from from)
-                     (and dry-run?
-                          #hasheq((layer . "overworld") (x . 0) (y . 1)))))
-  (cond
-    [dry-run?
-     (publish-signal-at! "iron_ore" 7 0.82 anchor)
-     (publish-signal-at! "ash_wood" 4 0.55
-                         (if (hash? anchor)
-                             (hash-set* anchor 'x (add1 (hash-ref anchor 'x 0)))
-                             #f))]
-    [(not (config-has-token? config))
-     (void)]
-    [else
-     (with-handlers ([exn:fail:artifacts-api? (lambda (_exn) (void))]
-                     [exn:fail? (lambda (_exn) (void))])
-       (define response (get-grand-exchange-orders #:config config #:size 100))
-       (define data (response-data response))
-       (define orders (if (list? data) data '()))
-       (define by-code (make-hash))
-       (for ([order orders] #:when (hash? order))
-         (define code (hash-ref order 'code #f))
-         (when code
-           (hash-update! by-code code (lambda (xs) (cons order xs)) '())))
-       (define signals
-         (for/list ([(code grouped) (in-hash by-code)])
-           (score-item-orders code grouped)))
-       (for ([signal (top-market-signals signals)])
-         (publish-signal-at! (hash-ref signal 'code)
-                             (hash-ref signal 'spread)
-                             (hash-ref signal 'score)
-                             anchor)))]))
-
-(define (snapshot-focus-points characters events routes)
-  (define from-chars
-    (for/list ([c characters] #:when (hash? c))
-      (hasheq 'layer (hash-ref c 'layer "overworld")
-              'x (hash-ref c 'x 0)
-              'y (hash-ref c 'y 0))))
-  (define from-events
-    (for/list ([e events] #:when (hash? e))
-      (hasheq 'layer (hash-ref e 'layer "overworld")
-              'x (hash-ref e 'x 0)
-              'y (hash-ref e 'y 0))))
-  (define from-routes
-    (apply append
-           (for/list ([r routes] #:when (hash? r))
-             (define pts (hash-ref r 'points '()))
-             (if (list? pts) pts '()))))
-  (append from-chars from-events from-routes))
-
-
-(define (fetch-world-others #:config [config (current-config)]
-                            #:limit [limit 12]
-                            #:exclude [exclude '()])
-  (with-handlers ([exn:fail? (lambda (_exn) '())])
-    (define response (get-character-leaderboard #:size (min limit 100) #:config config))
-    (define entries (let ([data (response-data response)]) (if (list? data) data '())))
-    (define exclude-set
-      (for/hash ([n exclude] #:when n)
-        (values (string-downcase (format "~a" n)) #t)))
-    (define names
-      (for/list ([e entries]
-                 #:when (and (hash? e) (hash-ref e 'name #f))
-                 #:unless (hash-has-key? exclude-set (string-downcase (format "~a" (hash-ref e 'name)))))
-        (hash-ref e 'name)))
-    (define limited (if (> (length names) limit) (take names limit) names))
-    (filter values
-            (for/list ([name limited])
-              (with-handlers ([exn:fail? (lambda (_exn) #f)])
-                (define char (response-data (get-character name #:config config)))
-                (and (hash? char)
-                     (hasheq 'name name
-                             'layer (hash-ref char 'layer "overworld")
-                             'x (hash-ref char 'x 0)
-                             'y (hash-ref char 'y 0)
-                             'map_id (hash-ref char 'map_id #f)
-                             'level (hash-ref char 'level 1)
-                             'skin (hash-ref char 'skin "")
-                             'other #t
-                             'cooldown (hash-ref char 'cooldown 0)
-                             'on_cooldown #f)))))))
-
-(define (raid-visual-record raid)
-  (and (hash? raid)
-       (hasheq 'code (hash-ref raid 'code (hash-ref raid 'name "raid"))
-               'layer (hash-ref raid 'layer "overworld")
-               'x (hash-ref raid 'x 0)
-               'y (hash-ref raid 'y 0))))
-
-(define (active-raids-list #:config [config (current-config)]
-                           #:dry-run? [dry-run? #f])
-  (cond
-    [(not (config-has-token? config)) '()]
-    [else
-     (with-handlers ([exn:fail:artifacts-api?
-                      (lambda (exn) (if dry-run? '() (raise exn)))]
-                     [exn:fail? (lambda (_exn) '())])
-       (define response (get-raids #:config config))
-       (define data (response-data response))
-       (filter values (map raid-visual-record (if (list? data) data '()))))]))
-
-(define (publish-world-snapshot! world characters events
-                                 #:routes [routes '()]
-                                 #:raids [raids '()])
-  (define focuses (snapshot-focus-points characters events routes))
-  (visualizer-publish!
-   (world-snapshot-message
-    #:maps (summarize-maps-for-visualizer (world-index-maps world)
-                                         #:focuses focuses)
-    #:characters (append (map character-visual-record characters)
-                       (fetch-world-others #:limit 12
-                       #:exclude (for/list ([c characters] #:when (hash? c))
-                                  (hash-ref c 'name #f))))
-    #:routes routes
-    #:events (for/list ([e events] #:when (hash? e))
-               (hasheq 'code (hash-ref e 'code (hash-ref e 'name "event"))
-                       'layer (hash-ref e 'layer "overworld")
-                       'x (hash-ref e 'x 0)
-                       'y (hash-ref e 'y 0)))
-    #:raids raids)))
-
-(define (publish-decision! name plan)
-  (visualizer-publish!
-   (bot-decision-message name
-                         (planned-action-name plan)
-                         (planned-action-reason plan)
-                         #:target (planned-action-payload plan))))
-
 (define (run-bot-once bot
                       #:config [config (current-config)]
                       #:world [world #f]
                       #:encyclopedia [encyclopedia #f]
                       #:dry-run? [dry-run? #f]
-                      #:bind-account? [bind-account? #t]
-                      #:publish-visualizer? [publish-visualizer? #t])
+                      #:bind-account? [bind-account? #t])
   (define world* (or world (load-world-index #:config config)))
   (define encyclopedia*
     (or encyclopedia (load-encyclopedia #:config config)))
@@ -508,8 +217,6 @@
     (if bind-account?
         (bind-bot-to-account bot my-chars)
         bot))
-  (define planned-routes '())
-  (define saw-market-scan? #f)
   (define results
     (for/list ([spec (bot-characters bot*)])
       (define name (symbol->string (character-spec-name spec)))
@@ -537,13 +244,6 @@
             (list name 'idle #f)]
            [else
             (log-decision name plan)
-            (when (eq? (planned-action-name plan) 'grand-exchange-orders)
-              (set! saw-market-scan? #t))
-            (define route (route-for-plan name enriched plan world*))
-            (when route
-              (set! planned-routes (cons route planned-routes)))
-            (when publish-visualizer?
-              (publish-decision! name plan))
             (define result
               (if dry-run?
                   #hasheq((dry_run . #t)
@@ -551,29 +251,7 @@
                           (reason . (planned-action-reason plan)))
                   (execute-planned-action name plan #:config config)))
             (list name 'acted result)])])))
-  ;; Optional overlays only. When the standalone bridge owns snapshots,
-  ;; bots do not need to publish world state for characters to appear in 3D.
-  (when publish-visualizer?
-    (define routes* (reverse planned-routes))
-    (bot-route-overlay routes*)
-    (unless (session-owns-snapshots?)
-      (define raids (active-raids-list #:config config #:dry-run? dry-run?))
-      (publish-world-snapshot! world* my-chars events #:routes routes* #:raids raids))
-    ;; Dry-run always emits a sample market signal so Godot can exercise overlays
-    ;; without waiting for a live GE scan plan.
-    (when (or dry-run? saw-market-scan?)
-      (define trader
-        (for/first ([c my-chars]
-                    #:when (and (hash? c)
-                                (equal? (string-downcase (format "~a" (hash-ref c 'name "")))
-                                        "trader")))
-          c))
-      (publish-market-signals! #:config config
-                               #:dry-run? dry-run?
-                               #:world world*
-                               #:from trader)))
   (values results my-chars))
-
 
 (define (cooldown-jobs-from-characters characters [now (current-seconds)])
   (for/list ([char characters] #:when (hash? char))
@@ -604,15 +282,7 @@
                       #:config [config (current-config)]
                       #:iterations [iterations +inf.0]
                       #:sleep-seconds [sleep-seconds 2]
-                      #:dry-run? [dry-run? #f]
-                      #:visualizer? [visualizer? (visualizer-enabled?)]
-                      #:visualizer-port [visualizer-port 8787])
-  ;; Godot is optional. Attach to an existing hub when present; otherwise start one.
-  (when visualizer?
-    (if (hub-alive?)
-        (printf "Visualizer hub already running; bot will publish overlays only.\n")
-        (start-visualizer-hub! #:port visualizer-port #:enabled? #t))
-    (flush-output))
+                      #:dry-run? [dry-run? #f])
   (printf "Loading world and encyclopedia...\n")
   (flush-output)
   (define world (load-world-index #:config config))
@@ -640,13 +310,12 @@
                            (printf "Runner error: ~a\n" (exn-message exn))
                            (flush-output)
                            sleep-seconds)])
-          (define-values (tick-results chars)
+          (define-values (_tick-results chars)
             (run-bot-once bot
                           #:config config
                           #:world world
                           #:encyclopedia encyclopedia
-                          #:dry-run? dry-run?
-                          #:publish-visualizer? visualizer?))
+                          #:dry-run? dry-run?))
           (define next-wait
             (suggested-loop-sleep chars #:base-seconds sleep-seconds))
           (when (> next-wait sleep-seconds)
