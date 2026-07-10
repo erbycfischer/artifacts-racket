@@ -1,6 +1,7 @@
 #lang racket
 
-(require "world.rkt")
+(require "world.rkt"
+         "dsl-forms.rkt")
 
 (provide (struct-out planned-action)
          character-field
@@ -14,9 +15,12 @@
          on-content?
          nearest-typed-content
          plan-character
+         plan-preferred-action
          best-safe-monster
          best-gather-resource
-         role-skill)
+         role-skill
+         character-first-goal
+         goal-preferred-actions)
 
 (struct planned-action (name payload reason priority) #:transparent)
 
@@ -223,12 +227,161 @@
          (and (<= distance 12)
               (move-to map "Intercept nearby active event." #:priority 80)))))
 
+(define (character-first-goal spec)
+  (for/or ([form (expand-guards (character-spec-forms spec))] #:when (goal-spec? form))
+    form))
+
+(define (goal-preferred-actions spec)
+  (define goal (character-first-goal spec))
+  (if goal (goal-spec-actions goal) '()))
+
+(define (first-payload spec [default #hasheq()])
+  (define payload (action-spec-payload spec))
+  (if (pair? payload) (car payload) default))
+
+(define (plan-craft char world [craft #f])
+  (cond
+    [(and craft (hash? craft) (on-content? char "workshop"))
+     (planned-action 'craft
+                     craft
+                     (format "Craft ~a." (hash-ref craft 'code "item"))
+                     72)]
+    [(on-content? char "workshop")
+     (planned-action 'craft #hasheq() "Craft at the workshop." 70)]
+    [else
+     (define workshop (nearest-typed-content world char "workshop"))
+     (and workshop (move-to workshop "Travel to workshop." #:priority 64))]))
+
+(define (plan-recycle char world [item #f])
+  (cond
+    [(and item (hash? item) (on-content? char "workshop"))
+     (planned-action 'recycle item (format "Recycle ~a." (hash-ref item 'code "item")) 68)]
+    [(on-content? char "workshop")
+     (planned-action 'recycle #hasheq() "Recycle at the workshop." 66)]
+    [else
+     (define workshop (nearest-typed-content world char "workshop"))
+     (and workshop (move-to workshop "Travel to recycle." #:priority 63))]))
+
+(define (plan-task char world mode)
+  (define on-task-tile?
+    (or (on-content? char "tasks_master")
+        (on-content? char "npc")))
+  (case mode
+    [(new)
+     (and on-task-tile?
+          (planned-action 'task-new '() "Accept a new task." 62))]
+    [(complete)
+     (and on-task-tile?
+          (planned-action 'task-complete '() "Complete the active task." 74))]
+    [(cancel)
+     (and on-task-tile?
+          (planned-action 'task-cancel '() "Cancel the active task." 58))]
+    [(exchange)
+     (and on-task-tile?
+          (planned-action 'task-exchange '() "Exchange task rewards." 60))]
+    [else #f]))
+
+(define (plan-npc char world mode [item #f])
+  (cond
+    [(and item (hash? item) (on-content? char "npc"))
+     (case mode
+       [(buy) (planned-action 'npc-buy item (format "Buy ~a." (hash-ref item 'code "item")) 61)]
+       [(sell) (planned-action 'npc-sell item (format "Sell ~a." (hash-ref item 'code "item")) 61)]
+       [else #f])]
+    [(on-content? char "npc")
+     (case mode
+       [(buy) (planned-action 'npc-buy #hasheq() "Buy from NPC." 55)]
+       [(sell) (planned-action 'npc-sell #hasheq() "Sell to NPC." 55)]
+       [else #f])]
+    [else
+     (define shop (nearest-typed-content world char "npc"))
+     (and shop (move-to shop "Travel to NPC shop." #:priority 52))]))
+
+(define (plan-transition char world)
+  (and (on-content? char "transition")
+       (planned-action 'transition '() "Use map transition." 58)))
+
+(define (plan-preferred-action char world spec
+                               #:role role
+                               #:monsters [monsters '()]
+                               #:resources [resources '()]
+                               #:events [events '()])
+  (define name (action-spec-name spec))
+  (define payload (first-payload spec))
+  (case name
+    [(rest)
+     (and (< (hp-ratio char) 0.9)
+          (planned-action 'rest '() "Rest per goal routine." 96))]
+    [(fight) (plan-combat char world monsters)]
+    [(gather)
+     (define skill (or (role-skill role) 'mining))
+     (plan-gather char world resources skill)]
+    [(bank-deposit-item) (plan-bank-trip char world)]
+    [(bank-withdraw-item)
+     (and (on-content? char "bank")
+          (planned-action 'bank-withdraw-item payload "Withdraw bank items." 88))]
+    [(craft) (plan-craft char world (if (hash? payload) payload #f))]
+    [(recycle) (plan-recycle char world (if (hash? payload) payload #f))]
+    [(task-new) (plan-task char world 'new)]
+    [(task-complete) (plan-task char world 'complete)]
+    [(task-cancel) (plan-task char world 'cancel)]
+    [(task-exchange) (plan-task char world 'exchange)]
+    [(npc-buy) (plan-npc char world 'buy (if (hash? payload) payload #f))]
+    [(npc-sell) (plan-npc char world 'sell (if (hash? payload) payload #f))]
+    [(grand-exchange-orders) (plan-trade char world)]
+    [(active-events) (plan-event-intercept char world events)]
+    [(transition) (or (plan-transition char world)
+                      (let ([node (nearest-typed-content world char "transition")])
+                        (and node (move-to node "Travel to transition." #:priority 57))))]
+    [(raids) #f]
+    [else #f]))
+
+(define (plan-from-preferred char world preferred
+                             #:role role
+                             #:monsters monsters
+                             #:resources resources
+                             #:events events)
+  (for/or ([spec preferred])
+    (plan-preferred-action char world spec
+                           #:role role
+                           #:monsters monsters
+                           #:resources resources
+                           #:events events)))
+
+(define (plan-role-default char world role
+                           #:monsters monsters
+                           #:resources resources)
+  (case role
+    [(combat fighter)
+     (or (plan-combat char world monsters)
+         (plan-bank-trip char world))]
+    [(mining woodcutting fishing alchemy gatherer)
+     (define skill (or (role-skill role) 'mining))
+     (or (plan-gather char world resources skill)
+         (plan-bank-trip char world))]
+    [(crafter crafting)
+     (or (plan-craft char world)
+         (plan-recycle char world)
+         (plan-bank-trip char world))]
+    [(tasker tasks)
+     (or (plan-task char world 'complete)
+         (plan-task char world 'new)
+         (plan-bank-trip char world))]
+    [(trader market)
+     (or (plan-trade char world)
+         (plan-npc char world 'sell)
+         (plan-bank-trip char world))]
+    [else
+     (or (plan-combat char world monsters)
+         (plan-gather char world resources 'mining))]))
+
 (define (plan-character char
                         world
                         #:role role
                         #:monsters [monsters '()]
                         #:resources [resources '()]
-                        #:events [events '()])
+                        #:events [events '()]
+                        #:preferred [preferred '()])
   (cond
     [(not (cooldown-ready? char))
      #f]
@@ -237,18 +390,16 @@
     [(inventory-full? char #:reserve 2)
      (plan-bank-trip char world)]
     [(plan-event-intercept char world events)]
+    [(pair? preferred)
+     (or (plan-from-preferred char world preferred
+                              #:role role
+                              #:monsters monsters
+                              #:resources resources
+                              #:events events)
+         (plan-role-default char world role
+                            #:monsters monsters
+                            #:resources resources))]
     [else
-     (case role
-       [(combat fighter)
-        (or (plan-combat char world monsters)
-            (plan-bank-trip char world))]
-       [(mining woodcutting fishing alchemy gatherer)
-        (define skill (or (role-skill role) 'mining))
-        (or (plan-gather char world resources skill)
-            (plan-bank-trip char world))]
-       [(trader market)
-        (or (plan-trade char world)
-            (plan-bank-trip char world))]
-       [else
-        (or (plan-combat char world monsters)
-            (plan-gather char world resources 'mining))])]))
+     (plan-role-default char world role
+                        #:monsters monsters
+                        #:resources resources)]))

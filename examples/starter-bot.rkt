@@ -4,14 +4,14 @@
 
 (bot starter
   (character miner #:role 'mining
-    (goal 'bootstrap-bankroll
-          (action 'gather)
-          (action 'bank-deposit-item)))
+    (pipeline 'bootstrap-bankroll
+      (gather)
+      (deposit-all)))
   (character fighter #:role 'combat
-    (goal 'safe-xp
-          (action 'fight)
-          (action 'rest)))
+    (pipeline 'safe-xp
+      (fight)
+      (rest)))
   (strategy balanced-growth
-    (action 'grand-exchange-orders)
-    (action 'active-events)
-    (action 'raids)))
+    (scan-ge)
+    (check-events)
+    (check-raids)))

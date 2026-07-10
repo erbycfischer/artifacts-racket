@@ -1,39 +1,46 @@
 #lang artifacts
 
 ;; Competitive multi-character bot.
-;; Roles are bound to your live account characters in order.
+;; Tags are local descriptors; #:as sets the live Artifacts name.
+;; Optional env overrides: ARTIFACTS_AS_FIGHTER, ARTIFACTS_AS_MINER, etc.
 ;; Set ARTIFACTS_API_TOKEN (or ARTIFACTS_TOKEN), then:
 ;;   racket examples/apex-bot.rkt
+;; Create missing characters from #:as names (or tags when omitted):
+;;   (play apex #:ensure-characters? #t)
 ;; Optional dry run:
 ;;   ARTIFACTS_DRY_RUN=1 racket examples/apex-bot.rkt
 
+(define (env-as-name tag)
+  (let ([v (getenv (format "ARTIFACTS_AS_~a" (string-upcase (symbol->string tag))))])
+    (and v (not (string=? v "")) v)))
+
 (bot apex
-  (character fighter #:role 'combat
-    (goal 'strongest-safe-farm
-          (action 'fight)
-          (action 'rest)
-          (action 'bank-deposit-item)))
-  (character miner #:role 'mining
-    (goal 'ore-pipeline
-          (action 'gather)
-          (action 'bank-deposit-item)))
-  (character woodcutter #:role 'woodcutting
-    (goal 'wood-pipeline
-          (action 'gather)
-          (action 'bank-deposit-item)))
-  (character fisher #:role 'fishing
-    (goal 'fish-pipeline
-          (action 'gather)
-          (action 'bank-deposit-item)))
-  (character trader #:role 'trader
-    (goal 'market-edge
-          (action 'grand-exchange-orders)
-          (action 'active-events)
-          (action 'raids)))
+  (character fighter #:role 'combat #:as (env-as-name 'fighter)
+    (pipeline 'strongest-safe-farm
+      (fight)
+      (rest)
+      (deposit-all)))
+  (character miner #:role 'mining #:as (env-as-name 'miner)
+    (pipeline 'ore-pipeline
+      (gather)
+      (deposit-all)))
+  (character woodcutter #:role 'woodcutting #:as (env-as-name 'woodcutter)
+    (pipeline 'wood-pipeline
+      (gather)
+      (deposit-all)))
+  (character fisher #:role 'fishing #:as (env-as-name 'fisher)
+    (pipeline 'fish-pipeline
+      (gather)
+      (deposit-all)))
+  (character trader #:role 'trader #:as (env-as-name 'trader)
+    (pipeline 'market-edge
+      (scan-ge)
+      (check-events)
+      (deposit-all)))
   (strategy maximize-account-value
-    (action 'active-events)
-    (action 'raids)
-    (action 'grand-exchange-orders)))
+    (scan-ge)
+    (check-events)
+    (check-raids)))
 
 (define dry-run?
   (let ([v (getenv "ARTIFACTS_DRY_RUN")])

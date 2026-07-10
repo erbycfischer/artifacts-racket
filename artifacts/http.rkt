@@ -19,6 +19,12 @@
          get-account-details
          get-my-characters
          get-character
+         create-character
+         delete-character
+         known-character-skins
+         character-skin-string
+         valid-character-skin?
+         valid-character-name?
          get-bank-details
          get-bank-items
          get-my-grand-exchange-orders
@@ -209,6 +215,51 @@
 
 (define (get-character name #:config [config (current-config)])
   (api-get (format "/characters/~a" name) #:config config))
+
+(define known-character-skins
+  '("men1" "men2" "men3"
+    "women1" "women2" "women3"
+    "corrupted1" "zombie1" "marauder1"))
+
+(define (character-skin-string skin)
+  (cond
+    [(string? skin) skin]
+    [(symbol? skin) (symbol->string skin)]
+    [else (error 'character-skin-string "expected skin symbol or string, got ~v" skin)]))
+
+(define (valid-character-skin? skin)
+  (member (character-skin-string skin) known-character-skins))
+
+(define (character-name-string name)
+  (cond
+    [(string? name) name]
+    [(symbol? name) (symbol->string name)]
+    [else (error 'character-name-string "expected name symbol or string, got ~v" name)]))
+
+(define (valid-character-name? name)
+  (regexp-match #px"^[a-zA-Z0-9_-]{3,12}$" (character-name-string name)))
+
+(define (create-character name
+                          #:skin [skin "men1"]
+                          #:config [config (current-config)])
+  (define name* (character-name-string name))
+  (unless (valid-character-name? name*)
+    (error 'create-character
+           "character name must be 3-12 alphanumeric, hyphen, or underscore characters, got ~a"
+           name*))
+  (unless (valid-character-skin? skin)
+    (error 'create-character "unknown character skin ~v" skin))
+  (api-post "/characters/create"
+            #:body (hasheq 'name name* 'skin (character-skin-string skin))
+            #:config config
+            #:auth? #t))
+
+(define (delete-character name #:config [config (current-config)])
+  (define name* (character-name-string name))
+  (api-post "/characters/delete"
+            #:body (hasheq 'name name*)
+            #:config config
+            #:auth? #t))
 
 (define (get-bank-details #:config [config (current-config)])
   (api-get "/my/bank" #:config config #:auth? #t))

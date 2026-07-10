@@ -171,13 +171,137 @@
   (test-case "bind-bot-to-account maps roles onto live character names"
     (define bot
       (bot-spec 'apex
-                (list (character-spec 'fighter 'combat '())
-                      (character-spec 'miner 'mining '())
+                (list (character-spec 'fighter 'combat #f '())
+                      (character-spec 'miner 'mining #f '())
                       (strategy-spec 's '()))))
     (define live (list #hasheq((name . "Alpha")) #hasheq((name . "Beta"))))
     (define bound (bind-bot-to-account bot live))
-    (check-equal? (map character-spec-name (bot-characters bound)) '(Alpha Beta))
+    (check-equal? (map character-spec-tag (bot-characters bound)) '(fighter miner))
+    (check-equal? (map character-spec-account-name (bot-characters bound)) '("Alpha" "Beta"))
     (check-equal? (map character-spec-role (bot-characters bound)) '(combat mining)))
+
+  (test-case "bind-bot-to-account prefers matching live names"
+    (define bot
+      (bot-spec 'apex
+                (list (character-spec 'miner 'mining #f '())
+                      (character-spec 'fighter 'combat #f '())
+                      (strategy-spec 's '()))))
+    (define live
+      (list #hasheq((name . "fighter"))
+            #hasheq((name . "miner"))))
+    (define bound (bind-bot-to-account bot live))
+    (check-equal? (map character-spec-tag (bot-characters bound)) '(miner fighter))
+    (check-equal? (map character-spec-account-name (bot-characters bound)) '("miner" "fighter"))
+    (check-equal? (map character-spec-role (bot-characters bound)) '(mining combat)))
+
+  (test-case "bind-bot-to-account honors explicit #:as names"
+    (define bot
+      (bot-spec 'apex
+                (list (character-spec 'fighter 'combat "IronMike" '())
+                      (character-spec 'miner 'mining "OreBot42" '())
+                      (strategy-spec 's '()))))
+    (define live
+      (list #hasheq((name . "IronMike"))
+            #hasheq((name . "OreBot42"))))
+    (define bound (bind-bot-to-account bot live))
+    (check-equal? (map character-spec-tag (bot-characters bound)) '(fighter miner))
+    (check-equal? (map character-spec-live-name (bot-characters bound)) '("IronMike" "OreBot42")))
+
+  (test-case "missing-bot-character-names uses live names from tags or #:as"
+    (define bot
+      (bot-spec 'apex
+                (list (character-spec 'fighter 'combat #f '())
+                      (character-spec 'miner 'mining "OreBot42" '())
+                      (strategy-spec 's '()))))
+    (define missing
+      (missing-bot-character-names bot
+                                 (list #hasheq((name . "fighter"))
+                                       #hasheq((name . "Alpha")))))
+    (check-equal? missing '("OreBot42")))
+
+  (test-case "character name and skin validation"
+    (check-true (valid-character-name? "fighter"))
+    (check-true (valid-character-name? 'miner))
+    (check-false (valid-character-name? "ab"))
+    (check-true (valid-character-skin? 'men1))
+    (check-true (valid-character-skin? "women3"))
+    (check-false (valid-character-skin? "dragon1")))
+
+  (test-case "action builders and pipeline goals"
+    (define spec
+      (goal 'ore-loop
+            (gather)
+            (deposit-all)
+            (buy 'copper_ore 5)))
+    (check-equal? (goal-spec-target spec) 'ore-loop)
+    (check-equal? (length (goal-spec-actions spec)) 3)
+    (check-equal? (action-spec-name (car (goal-spec-actions spec))) 'gather)
+    (check-equal? (action-spec-name (cadr (goal-spec-actions spec))) 'bank-deposit-item)
+    (define buy-action (last (goal-spec-actions spec)))
+    (check-equal? (action-spec-name buy-action) 'npc-buy)
+    (define starter
+      (bot-spec 'starter
+                (list (character-spec 'miner 'mining #f
+                                      (list (goal 'bootstrap (gather) (deposit-all))))
+                      (strategy-spec 's '()))))
+    (check-equal? (length (goal-preferred-actions (car (bot-characters starter)))) 2))
+
+  (test-case "planner follows preferred goal actions"
+    (define char
+      #hasheq((name . "miner")
+              (level . 5)
+              (hp . 90)
+              (max_hp . 100)
+              (cooldown . 0)
+              (inventory_max_items . 20)
+              (inventory . ())
+              (x . 0)
+              (y . 0)
+              (layer . "overworld")
+              (map_id . 1)
+              (mining_level . 5)
+              (interactions . #hasheq((content . #f)))))
+    (define world (build-world-index
+                   (list #hasheq((map_id . 1) (layer . "overworld") (x . 0) (y . 0)
+                                 (interactions . #hasheq((content . #f))))
+                         #hasheq((map_id . 2) (layer . "overworld") (x . 1) (y . 0)
+                                 (interactions . #hasheq((content . #hasheq((type . "resource")
+                                                                             (code . "copper_rocks")))))))))
+    (define preferred (list (gather) (deposit-all)))
+    (define plan (plan-character char world
+                                 #:role 'mining
+                                 #:resources (list #hasheq((code . "copper_rocks") (level . 1) (skill . "mining")))
+                                 #:preferred preferred))
+    (check-equal? (planned-action-name plan) 'move))
+
+  (test-case "planner crafts at workshop when preferred"
+    (define char
+      #hasheq((name . "smith")
+              (level . 3)
+              (hp . 90)
+              (max_hp . 100)
+              (cooldown . 0)
+              (inventory_max_items . 20)
+              (inventory . ())
+              (x . 0)
+              (y . 0)
+              (layer . "overworld")
+              (map_id . 10)
+              (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "workshop")))))))
+    (define world (build-world-index
+                   (list #hasheq((map_id . 10) (layer . "overworld") (x . 0) (y . 0)
+                                 (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "workshop")))))))))
+    (define plan (plan-character char world
+                                 #:role 'crafter
+                                 #:preferred (list (craft 'copper_bar 1))))
+    (check-equal? (planned-action-name plan) 'craft))
+
+  (test-case "create-character requires auth"
+    (define error
+      (capture-api-error
+       (lambda ()
+         (create-character "fighter" #:config missing-token-config))))
+    (check-equal? (api-error-status error) 452))
 
   (test-case "route-for-plan builds move paths"
     (define world

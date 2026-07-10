@@ -2,6 +2,7 @@
 
 (require "combat.rkt"
          "config.rkt"
+         "dispatch.rkt"
          "dsl-forms.rkt"
          "http.rkt"
          "market.rkt"
@@ -13,6 +14,7 @@
 
 (provide (all-from-out "combat.rkt"
                        "config.rkt"
+                       "dispatch.rkt"
                        "dsl-forms.rkt"
                        "http.rkt"
                        "market.rkt"

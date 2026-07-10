@@ -3,6 +3,7 @@
 (require json
          racket/string
          "config.rkt"
+         "dispatch.rkt"
          "dsl-forms.rkt"
          "http.rkt"
          "market.rkt"
@@ -18,6 +19,9 @@
          bot-characters
          bot-roles
          bind-bot-to-account
+         bot-character-names
+         missing-bot-character-names
+         ensure-bot-characters
          execute-planned-action
          route-for-plan
          ge-anchor-point
@@ -54,16 +58,90 @@
 
 (define (bot-roles bot)
   (for/hash ([spec (bot-characters bot)])
-    (values (symbol->string (character-spec-name spec))
+    (values (character-spec-live-name spec)
             (character-spec-role spec))))
+
+(define max-account-characters 5)
+
+(define (bot-character-names bot)
+  (map character-spec-live-name (bot-characters bot)))
+
+(define (live-character-names live-characters)
+  (for/list ([live (if (list? live-characters) live-characters '())]
+             #:when (hash? live))
+    (hash-ref live 'name)))
+
+(define (missing-bot-character-names bot live-characters)
+  (define live-names (list->set (live-character-names live-characters)))
+  (filter (lambda (name) (not (set-member? live-names name)))
+          (bot-character-names bot)))
+
+(define (skin-for-spec spec #:skin [default-skin "men1"] #:skins [skins #hasheq()])
+  (define tag (character-spec-tag spec))
+  (define live (character-spec-account-name spec))
+  (cond
+    [(hash-has-key? skins tag) (hash-ref skins tag)]
+    [(and live (hash-has-key? skins live)) (hash-ref skins live)]
+    [(hash-has-key? skins (string->symbol (character-spec-live-name spec)))
+     (hash-ref skins (string->symbol (character-spec-live-name spec)))]
+    [else default-skin]))
+
+(define (ensure-bot-characters bot
+                              #:config [config (current-config)]
+                              #:skin [default-skin "men1"]
+                              #:skins [skins #hasheq()]
+                              #:dry-run? [dry-run? #f])
+  (define lives (load-my-characters #:config config #:dry-run? dry-run? #:bot bot))
+  (define missing (missing-bot-character-names bot lives))
+  (cond
+    [(null? missing) lives]
+    [(> (+ (length (live-character-names lives)) (length missing)) max-account-characters)
+     (error 'ensure-bot-characters
+            "account already has ~a character(s); need ~a more but the limit is ~a"
+            (length (live-character-names lives))
+            (length missing)
+            max-account-characters)]
+    [else
+     (define missing-set (list->set missing))
+     (for ([spec (bot-characters bot)]
+           #:when (set-member? missing-set (character-spec-live-name spec)))
+       (define name (character-spec-live-name spec))
+       (define skin (skin-for-spec spec #:skin default-skin #:skins skins))
+       (if dry-run?
+           (printf "[dry-run] would create character ~a (skin ~a)\n" name (character-skin-string skin))
+           (begin
+             (printf "Creating character ~a (skin ~a)...\n" name (character-skin-string skin))
+             (flush-output)
+             (create-character name #:skin skin #:config config))))
+     (if dry-run?
+         lives
+         (load-my-characters #:config config #:dry-run? #f #:bot bot))]))
 
 (define (bind-bot-to-account bot live-characters)
   (define specs (bot-characters bot))
-  (define lives (if (list? live-characters) live-characters '()))
+  (define lives (filter hash? (if (list? live-characters) live-characters '())))
+  (define live-by-name
+    (for/hash ([live lives])
+      (values (hash-ref live 'name) live)))
+  (define claimed (make-hash))
+  (define (claim live)
+    (when live
+      (hash-set! claimed (hash-ref live 'name) #t))
+    live)
+  (define (first-unclaimed)
+    (for/or ([live lives])
+      (and (not (hash-ref claimed (hash-ref live 'name) #f))
+           live)))
   (define bound
-    (for/list ([spec specs] [live lives])
-      (character-spec (string->symbol (hash-ref live 'name))
+    (for/list ([spec specs])
+      (define desired (character-spec-live-name spec))
+      (define explicit? (character-spec-account-name spec))
+      (define live
+        (claim (or (hash-ref live-by-name desired #f)
+                   (and (not explicit?) (first-unclaimed)))))
+      (character-spec (character-spec-tag spec)
                       (character-spec-role spec)
+                      (if live (hash-ref live 'name) desired)
                       (character-spec-forms spec))))
   (bot-spec (bot-spec-name bot)
             (append bound
@@ -81,8 +159,8 @@
 
 (define (synthetic-character spec index)
   (define role (character-spec-role spec))
-  (define skill-level (if (eq? role 'combat) 3 2))
-  (hasheq 'name (symbol->string (character-spec-name spec))
+  (define skill-level (if (memq role '(combat fighter)) 3 2))
+  (hasheq 'name (character-spec-live-name spec)
           'level (max 1 skill-level)
           'hp 90
           'max_hp 100
@@ -96,6 +174,7 @@
           'mining_level skill-level
           'woodcutting_level skill-level
           'fishing_level skill-level
+          'alchemy_level skill-level
           'interactions #hasheq((content . #f))))
 
 (define (synthetic-account bot)
@@ -145,23 +224,45 @@
   (flush-output))
 
 (define (execute-planned-action name plan #:config [config (current-config)])
-  (define payload (planned-action-payload plan))
-  (case (planned-action-name plan)
-    [(move)
-     (cond
-       [(hash-has-key? payload 'map_id)
-        (action-move name #:map-id (hash-ref payload 'map_id) #:config config)]
-       [(and (hash-has-key? payload 'x) (hash-has-key? payload 'y))
-        (action-move name #:x (hash-ref payload 'x) #:y (hash-ref payload 'y) #:config config)]
-       [else (error 'execute-planned-action "move payload needs map_id or x/y")])]
-    [(rest) (action-rest name #:config config)]
-    [(fight) (action-fight name #:participants (if (list? payload) payload '()) #:config config)]
-    [(gather) (action-gather name #:config config)]
-    [(bank-deposit-item) (action-bank-deposit-item name payload #:config config)]
-    [(grand-exchange-orders) (get-grand-exchange-orders #:config config)]
-    [(active-events) (get-active-events #:config config)]
-    [(raids) (get-raids #:config config)]
-    [else (error 'execute-planned-action "unsupported planned action ~v" (planned-action-name plan))]))
+  (dispatch-action-name name
+                        (planned-action-name plan)
+                        (planned-action-payload plan)
+                        #:config config))
+
+(define (bot-strategy bot)
+  (for/or ([form (bot-spec-forms bot)] #:when (strategy-spec? form))
+    form))
+
+(define (strategy-actor-spec bot)
+  (define specs (bot-characters bot))
+  (or (for/or ([spec specs]
+               #:when (memq (character-spec-role spec) '(trader market)))
+        spec)
+      (and (pair? specs) (car specs))))
+
+(define (action-spec-payload-value spec)
+  (define payload (action-spec-payload spec))
+  (if (pair? payload) (car payload) payload))
+
+(define (run-strategy-tick bot* #:config [config (current-config)] #:dry-run? [dry-run? #f])
+  (define strategy (bot-strategy bot*))
+  (when strategy
+    (define actor (strategy-actor-spec bot*))
+    (when actor
+      (define live-name (character-spec-live-name actor))
+      (printf "[strategy ~a via ~a]\n"
+              (strategy-spec-name strategy)
+              live-name)
+      (flush-output)
+      (for ([spec (strategy-spec-forms strategy)])
+        (define action-name (action-spec-name spec))
+        (printf "  ~a\n" action-name)
+        (flush-output)
+        (unless dry-run?
+          (dispatch-action-name live-name
+                                action-name
+                                (action-spec-payload-value spec)
+                                #:config config))))))
 
 (define (point-from-char char)
   (hasheq 'layer (or (character-field char 'layer) "overworld")
@@ -217,15 +318,20 @@
     (if bind-account?
         (bind-bot-to-account bot my-chars)
         bot))
+  (run-strategy-tick bot* #:config config #:dry-run? dry-run?)
   (define results
     (for/list ([spec (bot-characters bot*)])
-      (define name (symbol->string (character-spec-name spec)))
+      (define tag (symbol->string (character-spec-tag spec)))
+      (define live-name (character-spec-live-name spec))
+      (define label
+        (if (equal? tag live-name) tag (format "~a (~a)" tag live-name)))
       (define role (character-spec-role spec))
-      (define live (find-character-by-name my-chars name))
+      (define preferred (goal-preferred-actions spec))
+      (define live (find-character-by-name my-chars live-name))
       (cond
         [(not live)
-         (printf "[~a] missing on account; skipping.\n" name)
-         (list name 'missing #f)]
+         (printf "[~a] missing on account; skipping.\n" label)
+         (list tag 'missing #f)]
         [else
          (define enriched
            (if (and dry-run? (not (config-has-token? config)))
@@ -237,20 +343,21 @@
                           #:role role
                           #:monsters monsters
                           #:resources resources
-                          #:events events))
+                          #:events events
+                          #:preferred preferred))
          (cond
            [(not plan)
-            (printf "[~a] waiting on cooldown or no plan.\n" name)
-            (list name 'idle #f)]
+            (printf "[~a] waiting on cooldown or no plan.\n" label)
+            (list tag 'idle #f)]
            [else
-            (log-decision name plan)
+            (log-decision label plan)
             (define result
               (if dry-run?
                   #hasheq((dry_run . #t)
                           (action . (symbol->string (planned-action-name plan)))
                           (reason . (planned-action-reason plan)))
-                  (execute-planned-action name plan #:config config)))
-            (list name 'acted result)])])))
+                  (execute-planned-action live-name plan #:config config)))
+            (list tag 'acted result)])])))
   (values results my-chars))
 
 (define (cooldown-jobs-from-characters characters [now (current-seconds)])
@@ -282,7 +389,16 @@
                       #:config [config (current-config)]
                       #:iterations [iterations +inf.0]
                       #:sleep-seconds [sleep-seconds 2]
-                      #:dry-run? [dry-run? #f])
+                      #:dry-run? [dry-run? #f]
+                      #:ensure-characters? [ensure-characters? #f]
+                      #:skin [default-skin "men1"]
+                      #:skins [skins #hasheq()])
+  (when ensure-characters?
+    (ensure-bot-characters bot
+                           #:config config
+                           #:skin default-skin
+                           #:skins skins
+                           #:dry-run? dry-run?))
   (printf "Loading world and encyclopedia...\n")
   (flush-output)
   (define world (load-world-index #:config config))
