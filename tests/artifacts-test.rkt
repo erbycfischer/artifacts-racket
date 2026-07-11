@@ -154,12 +154,12 @@
     (check-false (mid-price (list #hasheq((type . "buy") (price . 5)))))
     (check-false (mid-price '())))
 
-  (test-case "spread-margin measures the bid-ask margin"
-    ;; bid (16) clears the ask (10), so the taker margin is bid minus ask: +6,
-    ;; same sign as order-spread/profitable?.
+  (test-case "spread-margin measures the ask-bid margin"
+    ;; ask (16) sits above the bid (10), so the taker margin is ask minus bid:
+    ;; +6, same sign as order-spread/profitable?.
     (define book
-      (list #hasheq((type . "buy") (price . 16))
-            #hasheq((type . "sell") (price . 10))))
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 16))))
     (check-equal? (spread-margin book) 6)
     ;; A threshold above the margin suppresses the (sub-profit) sliver.
     (check-false (spread-margin book #:minimum-margin 7))
