@@ -22,6 +22,7 @@
          bank
          bank-items
          pending-items
+         purchase-history
          rate-limits
          item
          monster
@@ -61,6 +62,10 @@
 ;; Items the bank is still crafting or buying on your behalf.
 (define (pending-items #:config [config (current-config)])
   (get-pending-items #:config config))
+
+;; Your account's gem and subscription purchase records, paginated.
+(define (purchase-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (get-purchase-history #:page page #:size size #:config config))
 
 ;; Current rate-limit budget for the authenticated account.
 (define (rate-limits #:config [config (current-config)])

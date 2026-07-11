@@ -32,6 +32,7 @@
          get-my-grand-exchange-orders
          get-my-grand-exchange-history
          get-pending-items
+         get-purchase-history
          get-rate-limits
          get-account-logs
          get-character-logs
@@ -298,6 +299,12 @@
 
 (define (get-pending-items #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get "/my/pending_items" #:page page #:size size #:config config #:auth? #t))
+
+;; Records of gems and subscriptions your account has bought. Auth-gated like
+;; the other /my reads: a token-less config raises the structured 452 before
+;; any request leaves the process.
+(define (get-purchase-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get "/my/purchase_history" #:page page #:size size #:config config #:auth? #t))
 
 (define (get-rate-limits #:config [config (current-config)])
   (api-get "/my/rates" #:config config #:auth? #t))

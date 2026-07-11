@@ -1323,6 +1323,15 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "purchase-history forwards to get-purchase-history and requires a token"
+    ;; Auth-gated like bank: a token-less config raises the structured 452 only
+    ;; after the form has delegated to get-purchase-history with #:auth?, which
+    ;; proves the wiring without touching the network.
+    (define error (capture-api-error (lambda () (purchase-history #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
   (test-case "active-events forwards to get-active-events"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1345,6 +1354,7 @@
                    bank
                    bank-items
                    pending-items
+                   purchase-history
                    rate-limits
                    item
                    monster
