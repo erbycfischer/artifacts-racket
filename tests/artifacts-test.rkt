@@ -1370,6 +1370,30 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "my-events forwards to get-my-events and requires a token"
+    (define error (capture-api-error (lambda () (my-events "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "balance forwards to get-my-balance and requires a token"
+    (define error (capture-api-error (lambda () (balance "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "badges forwards to get-my-badges and requires a token"
+    (define error (capture-api-error (lambda () (badges "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "stats forwards to get-my-stats and requires a token"
+    (define error (capture-api-error (lambda () (stats "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
   (test-case "active-events forwards to get-active-events"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1377,6 +1401,32 @@
     ;; contract/arity error, means get-active-events was actually called.
     (check-exn exn:fail?
                (lambda () (active-events #:config dry-run-config))))
+
+  (test-case "my-events forwards to get-my-events and requires a token"
+    ;; Character-scoped /my read: a token-less config raises the structured 452
+    ;; only after the form delegates to get-my-events with #:auth?.
+    (define error (capture-api-error (lambda () (my-events "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "balance forwards to get-my-balance and requires a token"
+    (define error (capture-api-error (lambda () (balance "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "badges forwards to get-my-badges and requires a token"
+    (define error (capture-api-error (lambda () (badges "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "stats forwards to get-my-stats and requires a token"
+    (define error (capture-api-error (lambda () (stats "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
 
   (test-case "ge-order forwards to get-grand-exchange-order"
     ;; Public endpoint (no token required), so a token-less config would reach
@@ -1422,6 +1472,10 @@
                    achievements
                    effects
                    active-events
+                   my-events
+                   balance
+                   badges
+                   stats
                    raids
                    ge-order
                    character-leaderboard

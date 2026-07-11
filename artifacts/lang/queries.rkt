@@ -36,8 +36,12 @@
          tasks
          achievements
          effects
-         active-events
-         raids
+        active-events
+        my-events
+        balance
+        badges
+        stats
+        raids
          ge-order
         character-leaderboard
         account-leaderboard
@@ -131,6 +135,22 @@
 ;; Events currently running.
 (define (active-events #:config [config (current-config)])
   (get-active-events #:config config))
+
+;; A character's active event, if any. Character-scoped /my read.
+(define (my-events name #:config [config (current-config)])
+  (get-my-events name #:config config))
+
+;; A character's gold balance. Character-scoped /my read.
+(define (balance name #:config [config (current-config)])
+  (get-my-balance name #:config config))
+
+;; A character's earned badges. Character-scoped /my read.
+(define (badges name #:config [config (current-config)])
+  (get-my-badges name #:config config))
+
+;; A character's total stats. Character-scoped /my read.
+(define (stats name #:config [config (current-config)])
+  (get-my-stats name #:config config))
 
 ;; Raid definitions, paginated.
 (define (raids #:page [page 1] #:size [size 100] #:config [config (current-config)])

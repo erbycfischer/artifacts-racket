@@ -79,6 +79,7 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Task history | `get-my-tasks-history` |
 | Auctions (public) | `get-auctions` |
 | My auctions | `get-my-auctions` |
+| My events / balance / badges / stats | `get-my-events`, `get-my-balance`, `get-my-badges`, `get-my-stats` |
 | Rate limits | `get-rate-limits` |
 | Account logs | `get-account-logs` |
 | Character logs | `get-character-logs` |

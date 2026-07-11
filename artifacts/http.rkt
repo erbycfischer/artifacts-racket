@@ -37,6 +37,10 @@
          get-my-tasks-active
          get-my-tasks-history
          get-my-auctions
+         get-my-events
+         get-my-balance
+         get-my-badges
+         get-my-stats
          get-rate-limits
          get-account-logs
          get-character-logs
@@ -337,6 +341,26 @@
 (define (get-my-auctions name #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get (format "/my/~a/auctions" (character-name-string name))
              #:page page #:size size #:config config #:auth? #t))
+
+;; A character's active event, if any. Character-scoped /my read: a token-less
+;; config raises the structured 452 before any request leaves the process.
+(define (get-my-events name #:config [config (current-config)])
+  (api-get (format "/my/~a/events" (character-name-string name)) #:config config #:auth? #t))
+
+;; A character's gold balance. Character-scoped /my read: a token-less config
+;; raises the structured 452 before any request leaves the process.
+(define (get-my-balance name #:config [config (current-config)])
+  (api-get (format "/my/~a/balance" (character-name-string name)) #:config config #:auth? #t))
+
+;; A character's earned badges. Character-scoped /my read: a token-less config
+;; raises the structured 452 before any request leaves the process.
+(define (get-my-badges name #:config [config (current-config)])
+  (api-get (format "/my/~a/badges" (character-name-string name)) #:config config #:auth? #t))
+
+;; A character's total stats. Character-scoped /my read: a token-less config
+;; raises the structured 452 before any request leaves the process.
+(define (get-my-stats name #:config [config (current-config)])
+  (api-get (format "/my/~a/stats" (character-name-string name)) #:config config #:auth? #t))
 
 (define (get-rate-limits #:config [config (current-config)])
   (api-get "/my/rates" #:config config #:auth? #t))
