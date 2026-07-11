@@ -36,6 +36,7 @@
          get-gems-history
          get-my-tasks-active
          get-my-tasks-history
+         get-my-auctions
          get-rate-limits
          get-account-logs
          get-character-logs
@@ -59,6 +60,7 @@
          get-grand-exchange-orders
          get-grand-exchange-order
          get-grand-exchange-history
+         get-auctions
          get-events
          get-active-events
          get-event
@@ -328,6 +330,12 @@
   (paged-get (format "/my/~a/tasks/history" (character-name-string name))
              #:page page #:size size #:config config #:auth? #t))
 
+;; Auctions this character has listed, paginated. Character-scoped /my read:
+;; a token-less config raises the structured 452 before any request leaves.
+(define (get-my-auctions name #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get (format "/my/~a/auctions" (character-name-string name))
+             #:page page #:size size #:config config #:auth? #t))
+
 (define (get-rate-limits #:config [config (current-config)])
   (api-get "/my/rates" #:config config #:auth? #t))
 
@@ -408,6 +416,10 @@
 
 (define (get-grand-exchange-history code #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get (format "/grandexchange/history/~a" code) #:page page #:size size #:config config))
+
+;; Public auction house listings, paginated (no token needed).
+(define (get-auctions #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get "/auctions" #:page page #:size size #:config config))
 
 (define (get-events #:page [page 1] #:size [size 100] #:config [config (current-config)])
   (paged-get "/events" #:page page #:size size #:config config))

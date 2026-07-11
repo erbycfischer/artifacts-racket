@@ -1355,6 +1355,21 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "auctions forwards to get-auctions"
+    ;; Public endpoint (no token required); confirm it delegates to the HTTP
+    ;; layer by driving it at an unreachable host: a connection failure, not a
+    ;; contract/arity error, means get-auctions was actually called.
+    (check-exn exn:fail?
+               (lambda () (auctions #:config dry-run-config))))
+
+  (test-case "my-auctions forwards to get-my-auctions and requires a token"
+    ;; Character-scoped /my read: a token-less config raises the structured 452
+    ;; only after the form delegates to get-my-auctions with #:auth?.
+    (define error (capture-api-error (lambda () (my-auctions "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
   (test-case "active-events forwards to get-active-events"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1362,6 +1377,14 @@
     ;; contract/arity error, means get-active-events was actually called.
     (check-exn exn:fail?
                (lambda () (active-events #:config dry-run-config))))
+
+  (test-case "ge-order forwards to get-grand-exchange-order"
+    ;; Public endpoint (no token required), so a token-less config would reach
+    ;; the network rather than raising 452. Drive it at an unreachable host and
+    ;; confirm it delegates to the HTTP layer: a connection failure, not a
+    ;; contract/arity error, means get-grand-exchange-order was actually called.
+    (check-exn exn:fail?
+               (lambda () (ge-order 42 #:config dry-run-config))))
 
   (test-case "character-leaderboard forwards to get-character-leaderboard"
     ;; Public endpoint (no token required); same reach-the-HTTP-layer proof as
@@ -1389,11 +1412,14 @@
                    effects
                    active-events
                    raids
+                   ge-order
                    character-leaderboard
                    account-leaderboard
                    server-details
                    maps
                    q:map
                    active-task
-                   task-history)])
+                   task-history
+                   auctions
+                   my-auctions)])
       (check-pred procedure? q))))

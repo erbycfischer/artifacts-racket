@@ -77,6 +77,8 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Gems history | `get-gems-history` |
 | Active task | `get-my-tasks-active` |
 | Task history | `get-my-tasks-history` |
+| Auctions (public) | `get-auctions` |
+| My auctions | `get-my-auctions` |
 | Rate limits | `get-rate-limits` |
 | Account logs | `get-account-logs` |
 | Character logs | `get-character-logs` |
@@ -89,6 +91,7 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Achievements | `get-achievements` |
 | Effects | `get-effects` |
 | GE orders (public) | `get-grand-exchange-orders` |
+| GE order (public, by id) | `get-grand-exchange-order` (`ge-order`) |
 | GE history (public, by code) | `get-grand-exchange-history` |
 | Events (list / one) | `get-events`, `get-event` |
 | Raids (list / one / leaderboard) | `get-raids`, `get-raid`, `get-raid-leaderboard` |

@@ -26,7 +26,9 @@
         gems-history
         active-task
         task-history
-         rate-limits
+        auctions
+        my-auctions
+        rate-limits
          item
          monster
          resource
@@ -36,6 +38,7 @@
          effects
          active-events
          raids
+         ge-order
          character-leaderboard
          account-leaderboard
          server-details
@@ -83,6 +86,14 @@
 (define (task-history name #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (get-my-tasks-history name #:page page #:size size #:config config))
 
+;; Public auction house listings, paginated (no token needed).
+(define (auctions #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (get-auctions #:page page #:size size #:config config))
+
+;; Auctions this character has listed, paginated. Character-scoped /my read.
+(define (my-auctions name #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (get-my-auctions name #:page page #:size size #:config config))
+
 ;; Current rate-limit budget for the authenticated account.
 (define (rate-limits #:config [config (current-config)])
   (get-rate-limits #:config config))
@@ -122,6 +133,10 @@
 ;; Raid definitions, paginated.
 (define (raids #:page [page 1] #:size [size 100] #:config [config (current-config)])
   (get-raids #:page page #:size size #:config config))
+
+;; A single public Grand Exchange order by id, for re-checking one listing.
+(define (ge-order id #:config [config (current-config)])
+  (get-grand-exchange-order id #:config config))
 
 ;; Character leaderboard, optionally sorted by a column name.
 (define (character-leaderboard #:sort [sort #f] #:config [config (current-config)])
