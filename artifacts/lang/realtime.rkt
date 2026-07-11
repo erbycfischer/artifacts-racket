@@ -11,8 +11,16 @@
 ;; poll or prepare realtime data; only the visual client does the networking.
 ;; Building the data model here now means future ingestion can drop in without
 ;; touching the framework core.
+;;
+;; On top of the pure data model, this module also offers REST-polling helpers
+;; that turn official character state into the same snapshot shape. Polling is
+;; the bot-side "realtime parity": a bot may read character state over REST
+;; without a WebSocket and without importing the 3D visualizer. The polling
+;; helpers are plain REST and need no realtime flag; the flag only gates
+;; automatic wiring (a future scheduler hook), not these functions.
 
-(require "../config.rkt")
+(require "../config.rkt"
+         "../http.rkt")
 
 (define (hash-ref/default value key default)
   (if (hash? value) (hash-ref value key default) default))
@@ -27,7 +35,10 @@
          realtime-snapshot-x
          realtime-snapshot-y
          realtime-snapshot-cooldown-expiration
-         snapshot-from-character)
+         snapshot-from-character
+         poll-character-snapshot
+         poll-account-snapshots
+         make-snapshot-stream)
 
 ;; Live character snapshot drawn from a realtime update. Read-only data shape
 ;; only; nothing here reaches the network.
@@ -59,3 +70,40 @@
                      (get 'x)
                      (get 'y)
                      (get 'cooldown_expiration)))
+
+;; Pull one live character over REST and project it into a realtime snapshot.
+;; The endpoint is public, so we gate on a usable token ourselves and raise the
+;; structured 452 api-error (the same one the HTTP layer raises) before any
+;; network call; the caller decides how to handle it. Returns #f when the
+;; response carries no usable character data rather than fabricating a row.
+(define (poll-character-snapshot name #:config [config (current-config)])
+  (ensure-authenticated! config)
+  (define response (get-character name #:config config))
+  (define char (hash-ref/default response 'data #f))
+  (and (hash? char) (snapshot-from-character char #:config config)))
+
+;; Pull the whole account over REST and return one snapshot per live character.
+;; Defensive on empty: a response with no data yields an empty list, never an
+;; error, so a brand-new or token-less account doesn't crash the caller.
+(define (poll-account-snapshots #:config [config (current-config)])
+  (ensure-authenticated! config)
+  (define response (get-my-characters #:config config))
+  (define chars (hash-ref/default response 'data '()))
+  (if (list? chars)
+      (for/list ([char (in-list chars)] #:when (hash? char))
+        (snapshot-from-character char #:config config))
+      '()))
+
+;; Build a polling closure over a fixed set of character names. Each call
+;; returns a list of current snapshots, one per name, in the same order given.
+;; It does NOT sleep or block: the runner owns timing and calls the closure on
+;; its own schedule (its own loop/sleep). A failed fetch for a name yields #f
+;; in that slot so one dead character never takes down the rest of the stream.
+(define (make-snapshot-stream names
+                              #:interval-seconds [interval-seconds 2]
+                              #:config [config (current-config)])
+  (define name-list (map character-name-string names))
+  (lambda ()
+    (for/list ([name (in-list name-list)])
+      (with-handlers ([exn:fail? (lambda (_exn) #f)])
+        (poll-character-snapshot name #:config config)))))

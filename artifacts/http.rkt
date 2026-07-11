@@ -26,6 +26,7 @@
          character-skin-string
          valid-character-skin?
          valid-character-name?
+         character-name-string
          get-bank-details
          get-bank-items
          get-my-grand-exchange-orders

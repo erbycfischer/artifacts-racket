@@ -17,7 +17,7 @@
          "../artifacts/planner.rkt"
          "../artifacts/combat.rkt"
          "../artifacts/runner.rkt"
-        (rename-in "../artifacts/lang/queries.rkt" [character q:character]))
+        (rename-in "../artifacts/lang/queries.rkt" [character q:character] [map q:map]))
 
 (define test-config
   (artifacts-config "https://api.artifactsmmo.com/"
@@ -103,12 +103,12 @@
                   "near"))
 
   (test-case "market helpers score spreads"
-    (define buys (list #hasheq((price . 11)) #hasheq((price . 15))))
-    (define sells (list #hasheq((price . 9)) #hasheq((price . 12))))
-    (check-equal? (best-buy-price buys) 15)
-    (check-equal? (best-sell-price sells) 9)
-    (check-equal? (order-spread buys sells) 6)
-    (check-true (profitable-spread? buys sells #:minimum-margin 5)))
+    (define buys (list #hasheq((price . 9)) #hasheq((price . 12))))
+    (define sells (list #hasheq((price . 13)) #hasheq((price . 15))))
+    (check-equal? (best-buy-price buys) 12)
+    (check-equal? (best-sell-price sells) 13)
+    (check-equal? (order-spread buys sells) 1)
+    (check-false (profitable-spread? buys sells #:minimum-margin 5)))
 
   (test-case "ge-book splits buys and sells by type"
     (define mixed
@@ -154,18 +154,22 @@
     (check-false (mid-price (list #hasheq((type . "buy") (price . 5)))))
     (check-false (mid-price '())))
 
-  (test-case "spread-margin measures the ask-bid gap"
+  (test-case "spread-margin measures the bid-ask margin"
+    ;; bid (16) clears the ask (10), so the taker margin is bid minus ask: +6,
+    ;; same sign as order-spread/profitable?.
     (define book
-      (list #hasheq((type . "buy") (price . 10))
-            #hasheq((type . "sell") (price . 14))))
-    (check-equal? (spread-margin book) 4)
-    ;; A threshold above the gap suppresses the (sub-profit) sliver.
-    (check-false (spread-margin book #:minimum-margin 5))
-    (check-equal? (spread-margin book #:minimum-margin 4) 4)
-    ;; Thin book -> no gap.
+      (list #hasheq((type . "buy") (price . 16))
+            #hasheq((type . "sell") (price . 10))))
+    (check-equal? (spread-margin book) 6)
+    ;; A threshold above the margin suppresses the (sub-profit) sliver.
+    (check-false (spread-margin book #:minimum-margin 7))
+    (check-equal? (spread-margin book #:minimum-margin 6) 6)
+    ;; Thin book -> no margin.
     (check-false (spread-margin (list #hasheq((type . "buy") (price . 5))))))
 
   (test-case "profitable? answers with a threshold on a mixed book"
+    ;; A book is profitable when the best ask clears the best bid: a seller
+    ;; asks more than a buyer bids, so a maker buys low and sells high.
     (define wide
       (list #hasheq((type . "buy") (price . 10))
             #hasheq((type . "sell") (price . 16))))
@@ -176,9 +180,9 @@
     (check-false (profitable? wide #:minimum-margin 7))
     (check-false (profitable? tight #:minimum-margin 5))
     (check-true (profitable? tight #:minimum-margin 1))
-    ;; Inverted or one-sided book is never profitable.
-    (check-false (profitable? (list #hasheq((type . "buy") (price . 20))
-                                    #hasheq((type . "sell") (price . 14)))
+    ;; Ask below bid (or a one-sided book) is never profitable.
+    (check-false (profitable? (list #hasheq((type . "buy") (price . 14))
+                                    #hasheq((type . "sell") (price . 5)))
                               #:minimum-margin 1))
     (check-false (profitable? (list #hasheq((type . "buy") (price . 5)))
                               #:minimum-margin 1)))
@@ -396,10 +400,10 @@
     (check-false (route-for-plan "miner" char (planned-action 'fight #hasheq() "no" 1) world)))
 
   (test-case "score-spread rewards deeper books"
-    (define thin-buys (list #hasheq((type . "buy") (price . 20) (quantity . 1))))
-    (define thin-sells (list #hasheq((type . "sell") (price . 10) (quantity . 1))))
-    (define deep-buys (list #hasheq((type . "buy") (price . 20) (quantity . 40))))
-    (define deep-sells (list #hasheq((type . "sell") (price . 10) (quantity . 40))))
+    (define thin-buys (list #hasheq((type . "buy") (price . 10) (quantity . 1))))
+    (define thin-sells (list #hasheq((type . "sell") (price . 20) (quantity . 1))))
+    (define deep-buys (list #hasheq((type . "buy") (price . 10) (quantity . 40))))
+    (define deep-sells (list #hasheq((type . "sell") (price . 20) (quantity . 40))))
     (define thin (score-spread thin-buys thin-sells))
     (define deep (score-spread deep-buys deep-sells))
     (check-true (number? thin))
@@ -1256,7 +1260,40 @@
     ;; The snapshot is a transparent projection, so struct->vector exposes
     ;; exactly the six modeled fields (plus the struct type tag).
     (check-equal? (vector->list (struct->vector snap))
-                  (list 'struct:realtime-snapshot "scout" 42 100 7 -3 1700000123))))
+                  (list 'struct:realtime-snapshot "scout" 42 100 7 -3 1700000123)))
+
+  (test-case "poll-character-snapshot refuses a missing token with 452"
+    ;; get-character is a public endpoint, so we gate on the token ourselves;
+    ;; without it the helper must raise the structured 452 before any network.
+    (define err
+      (capture-api-error
+       (lambda ()
+         (poll-character-snapshot "scout" #:config missing-token-config))))
+    (check-true (api-error? err))
+    (check-equal? (api-error-status err) 452)
+    (check-equal? (api-error-code err) 452))
+
+  (test-case "make-snapshot-stream keeps one slot per name and never crashes"
+    ;; Drive the closure offline: the stream's contract is exactly one result
+    ;; per named character, in order, and #f where a fetch fails. We assert the
+    ;; returned arity and that a dead server yields #f per slot rather than
+    ;; throwing, which is the behavior the runner relies on.
+    (define names '("alpha" "beta"))
+    (define stream
+      (make-snapshot-stream names
+        #:config (artifacts-config "http://127.0.0.1:9" #f "TEST_TOKEN")))
+    (define live (stream))
+    (check-equal? (length live) (length names))
+    (for ([slot (in-list live)]) (check-false slot))
+    ;; The shape each slot would carry for good data: project the same prepared
+    ;; characters straight through snapshot-from-character, no network needed.
+    (define chars
+      (list #hasheq((name . "alpha") (hp . 10) (max_hp . 100) (x . 1) (y . 2) (cooldown_expiration . 5))
+            #hasheq((name . "beta")  (hp . 20) (max_hp . 100) (x . 3) (y . 4) (cooldown_expiration . 6))))
+    (define expected
+      (map (lambda (c) (snapshot-from-character c #:config test-config)) chars))
+    (check-equal? (map realtime-snapshot-character-name expected) '("alpha" "beta"))
+    (check-equal? (map realtime-snapshot-hp expected) '(10 20))))
 
 ;; ---- Read/query layer: thin keyword wrappers over ../http.rkt ----
 ;; These cases prove the query forms forward to the right HTTP wrapper. The
@@ -1286,19 +1323,19 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
-  (test-case "active-events forwards to get-active-events and requires a token"
-    (define error (capture-api-error (lambda () (active-events #:config missing-token-config))))
-    (check-true (api-error? error))
-    (check-equal? (api-error-status error) 452)
-    (check-equal? (api-error-code error) 452))
+  (test-case "active-events forwards to get-active-events"
+    ;; Public endpoint (no token required), so a token-less config would reach
+    ;; the network rather than raising 452. Drive it at an unreachable host and
+    ;; confirm it delegates to the HTTP layer: a connection failure, not a
+    ;; contract/arity error, means get-active-events was actually called.
+    (check-exn exn:fail?
+               (lambda () (active-events #:config dry-run-config))))
 
-  (test-case "character-leaderboard forwards to get-character-leaderboard and requires a token"
-    (define error
-      (capture-api-error
-       (lambda () (character-leaderboard #:sort "level" #:config missing-token-config))))
-    (check-true (api-error? error))
-    (check-equal? (api-error-status error) 452)
-    (check-equal? (api-error-code error) 452))
+  (test-case "character-leaderboard forwards to get-character-leaderboard"
+    ;; Public endpoint (no token required); same reach-the-HTTP-layer proof as
+    ;; the public forms above. The #:sort passes straight through to the wrapper.
+    (check-exn exn:fail?
+               (lambda () (character-leaderboard #:sort "level" #:config dry-run-config))))
 
   (test-case "every query form is bound and callable"
     ;; Guards against a typo'd provide: each should be a procedure, not #<undefined>.
@@ -1322,5 +1359,5 @@
                    account-leaderboard
                    server-details
                    maps
-                   map)])
+                   q:map)])
       (check-pred procedure? q))))

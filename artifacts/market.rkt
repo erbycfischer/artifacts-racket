@@ -33,7 +33,9 @@
 (define (order-spread buy-orders sell-orders)
   (define buy (best-buy-price buy-orders))
   (define sell (best-sell-price sell-orders))
-  (and buy sell (- buy sell)))
+  ;; Margin a maker captures is the ask minus the bid (sell price minus buy
+  ;; price), so a profitable book (bid below ask) yields a positive number.
+  (and buy sell (- sell buy)))
 
 (define (profitable-spread? buy-orders sell-orders #:minimum-margin [minimum-margin 1])
   (define spread (order-spread buy-orders sell-orders))
@@ -91,9 +93,11 @@
   (define ask (best-ask orders))
   (and bid ask (/ (+ bid ask) 2.0)))
 
-;; Numeric gap from best ask down to best bid. A positive result is the margin a
-;; maker could capture; #f when the book is too thin. minimum-margin floors the
-;; result so a sub-threshold gap returns #f instead of a misleading sliver.
+;; Numeric margin from best ask down to best bid, the same sign as
+;; order-spread so it agrees with profitable?. A positive result is the spread
+;; a maker captures (buy at the bid, sell into the ask); #f when the book is too
+;; thin. minimum-margin floors the result so a sub-threshold gap returns #f
+;; instead of a misleading sliver.
 (define (spread-margin orders #:minimum-margin [minimum-margin 0])
   (define bid (best-bid orders))
   (define ask (best-ask orders))
