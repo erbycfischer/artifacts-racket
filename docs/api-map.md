@@ -96,6 +96,7 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Events (list / one) | `get-events`, `get-event` |
 | Raids (list / one / leaderboard) | `get-raids`, `get-raid`, `get-raid-leaderboard` |
 | Character / account leaderboards | `get-character-leaderboard`, `get-account-leaderboard` |
+| Column leaderboard / rankings | `get-leaderboard`, `get-rankings` |
 | Fight simulation | `simulate-fight` (used by `matchup-score`) |
 
 ## Fight matchup scoring (helpers, not direct API builders)

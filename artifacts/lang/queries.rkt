@@ -39,9 +39,11 @@
          active-events
          raids
          ge-order
-         character-leaderboard
-         account-leaderboard
-         server-details
+        character-leaderboard
+        account-leaderboard
+        leaderboard
+        rankings
+        server-details
          maps
          map)
 
@@ -145,6 +147,14 @@
 ;; Account leaderboard, optionally sorted by a column name.
 (define (account-leaderboard #:sort [sort #f] #:config [config (current-config)])
   (get-account-leaderboard #:sort sort #:config config))
+
+;; Generic column leaderboard (level/gold/fame), sorted by that column.
+(define (leaderboard column #:sort [sort #f] #:config [config (current-config)])
+  (get-leaderboard column #:sort sort #:config config))
+
+;; Account rankings by column (account-wide variant of the column leaderboard).
+(define (rankings column #:sort [sort #f] #:config [config (current-config)])
+  (get-rankings column #:sort sort #:config config))
 
 ;; Server status and the announced next reset time.
 (define (server-details #:config [config (current-config)])

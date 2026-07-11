@@ -1392,6 +1392,17 @@
     (check-exn exn:fail?
                (lambda () (character-leaderboard #:sort "level" #:config dry-run-config))))
 
+  (test-case "leaderboard forwards to get-leaderboard"
+    ;; Public endpoint; confirm it delegates to the HTTP layer by driving it at
+    ;; an unreachable host: a connection failure means get-leaderboard was called.
+    (check-exn exn:fail?
+               (lambda () (leaderboard "gold" #:config dry-run-config))))
+
+  (test-case "rankings forwards to get-rankings"
+    ;; Public endpoint; same reach-the-HTTP-layer proof as leaderboard above.
+    (check-exn exn:fail?
+               (lambda () (rankings "level" #:config dry-run-config))))
+
   (test-case "every query form is bound and callable"
     ;; Guards against a typo'd provide: each should be a procedure, not #<undefined>.
     (for ([q (list q:character
@@ -1415,6 +1426,8 @@
                    ge-order
                    character-leaderboard
                    account-leaderboard
+                   leaderboard
+                   rankings
                    server-details
                    maps
                    q:map

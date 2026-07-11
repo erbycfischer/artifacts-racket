@@ -10,7 +10,7 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - Account character writes: create and delete characters (`POST /characters/create`, `POST /characters/delete`).
 - Public encyclopedia reads: maps, map lookup, items, monsters, resources, NPC details/items, tasks, achievements, and effects.
 - Grand Exchange reads and account order/history reads, including a single public order by id (`get-grand-exchange-order` / `ge-order`).
-- Events, active events, raids, raid details, and raid leaderboard.
+- Events, active events, raids, raid details, and leaderboards (character, account, generic column, and rankings).
 - Fight simulation wrapper.
 - Character actions: movement, transition, rest, equip/unequip, use, fight, gather, craft, recycle, bank, NPC buy/sell, Grand Exchange, tasks, give, claim, delete, and skin change.
 

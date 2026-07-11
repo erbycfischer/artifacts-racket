@@ -69,6 +69,8 @@
          get-raid-leaderboard
          get-character-leaderboard
          get-account-leaderboard
+         get-leaderboard
+         get-rankings
          simulate-fight
          action-move
          action-transition
@@ -453,6 +455,22 @@
                                  #:size [size 50]
                                  #:config [config (current-config)])
   (api-get "/leaderboard/accounts"
+           #:params (append `((page . ,page) (size . ,size))
+                            (if sort `((sort . ,sort)) '()))
+           #:config config))
+
+;; Generic column leaderboard, e.g. level/gold/fame. Public, paged, sorted by
+;; the requested column.
+(define (get-leaderboard column #:sort [sort #f] #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (api-get (format "/leaderboard/~a" column)
+           #:params (append `((page . ,page) (size . ,size))
+                            (if sort `((sort . ,sort)) '()))
+           #:config config))
+
+;; Account rankings by column (the account-wide variant of the column
+;; leaderboard). Public, paged, sorted by the requested column.
+(define (get-rankings column #:sort [sort #f] #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (api-get (format "/rankings/~a" column)
            #:params (append `((page . ,page) (size . ,size))
                             (if sort `((sort . ,sort)) '()))
            #:config config))
