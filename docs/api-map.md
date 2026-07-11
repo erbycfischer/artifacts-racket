@@ -75,6 +75,8 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Pending items | `get-pending-items` |
 | Purchase history | `get-purchase-history` |
 | Gems history | `get-gems-history` |
+| Active task | `get-my-tasks-active` |
+| Task history | `get-my-tasks-history` |
 | Rate limits | `get-rate-limits` |
 | Account logs | `get-account-logs` |
 | Character logs | `get-character-logs` |

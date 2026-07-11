@@ -1340,6 +1340,21 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "active-task forwards to get-my-tasks-active and requires a token"
+    ;; Character-scoped /my read: a token-less config raises the structured 452
+    ;; only after the form delegates to get-my-tasks-active with #:auth?.
+    (define error (capture-api-error (lambda () (active-task "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "task-history forwards to get-my-tasks-history and requires a token"
+    ;; Same character-scoped /my shape as active-task: token-less raises 452.
+    (define error (capture-api-error (lambda () (task-history "scout" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
   (test-case "active-events forwards to get-active-events"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1378,5 +1393,7 @@
                    account-leaderboard
                    server-details
                    maps
-                   q:map)])
+                   q:map
+                   active-task
+                   task-history)])
       (check-pred procedure? q))))

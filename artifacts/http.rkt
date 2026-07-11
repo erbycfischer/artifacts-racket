@@ -34,6 +34,8 @@
          get-pending-items
          get-purchase-history
          get-gems-history
+         get-my-tasks-active
+         get-my-tasks-history
          get-rate-limits
          get-account-logs
          get-character-logs
@@ -55,6 +57,7 @@
          get-achievements
          get-effects
          get-grand-exchange-orders
+         get-grand-exchange-order
          get-grand-exchange-history
          get-events
          get-active-events
@@ -313,6 +316,18 @@
 (define (get-gems-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get "/my/gems_history" #:page page #:size size #:config config #:auth? #t))
 
+;; The task a character is currently working, if any. Character-scoped /my
+;; read: a token-less config raises the structured 452 before any request.
+(define (get-my-tasks-active name #:config [config (current-config)])
+  (api-get (format "/my/~a/tasks/active" (character-name-string name))
+           #:config config #:auth? #t))
+
+;; A character's completed-task history, paginated. Same character-scoped /my
+;; shape; a missing token raises the structured 452 before the request leaves.
+(define (get-my-tasks-history name #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get (format "/my/~a/tasks/history" (character-name-string name))
+             #:page page #:size size #:config config #:auth? #t))
+
 (define (get-rate-limits #:config [config (current-config)])
   (api-get "/my/rates" #:config config #:auth? #t))
 
@@ -384,6 +399,12 @@
              #:page page
              #:size size
              #:config config))
+
+;; A single public Grand Exchange sell order by its id. Mirrors the plural
+;; /grandexchange/orders list but addresses one order directly, so bots can
+;; re-check a specific listing's price and remaining quantity before buying.
+(define (get-grand-exchange-order id #:config [config (current-config)])
+  (api-get (format "/grandexchange/orders/~a" id) #:config config))
 
 (define (get-grand-exchange-history code #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get (format "/grandexchange/history/~a" code) #:page page #:size size #:config config))

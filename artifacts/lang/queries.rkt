@@ -22,8 +22,10 @@
          bank
          bank-items
          pending-items
-         purchase-history
-         gems-history
+        purchase-history
+        gems-history
+        active-task
+        task-history
          rate-limits
          item
          monster
@@ -72,6 +74,14 @@
 ;; refunds), paginated straight through to get-gems-history.
 (define (gems-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (get-gems-history #:page page #:size size #:config config))
+
+;; The task a character is currently on, if any. Character-scoped /my read.
+(define (active-task name #:config [config (current-config)])
+  (get-my-tasks-active name #:config config))
+
+;; A character's completed-task history, paginated. Character-scoped /my read.
+(define (task-history name #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (get-my-tasks-history name #:page page #:size size #:config config))
 
 ;; Current rate-limit budget for the authenticated account.
 (define (rate-limits #:config [config (current-config)])
