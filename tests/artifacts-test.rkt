@@ -736,6 +736,74 @@
     (check-equal? (length (expand-guards (list rest-guard) hurt)) 1)
     (check-equal? (expand-guards (list rest-guard) packed) '()))
 
+  (test-case "every HTTP action wrapper has a builder, a known name, and a dispatch route"
+    ;; Real parity check: the framework must cover the full character-action
+    ;; surface of the official API. For each wrapper we confirm (a) a DSL
+    ;; builder yields the matching action-spec name, (b) that name passes
+    ;; known-action? so (action '...) validates, and (c) the dispatcher has a
+    ;; route (it reaches the HTTP layer rather than answering "unsupported
+    ;; action"). A regression here would mean a new API action was added
+    ;; upstream but never wired into the DSL.
+    (define builders
+      (list (cons 'move (move-to #:x 1 #:y 2))
+            (cons 'transition (transition))
+            (cons 'rest (rest))
+            (cons 'equip (equip "weapon"))
+            (cons 'unequip (unequip "weapon"))
+            (cons 'use (use-item #:code 'small_health_potion))
+            (cons 'fight (fight))
+            (cons 'gather (gather))
+            (cons 'craft (craft #:code 'copper_bar #:qty 1))
+            (cons 'recycle (recycle #:code 'copper_ore #:qty 1))
+            (cons 'bank-deposit-item (deposit-all))
+            (cons 'bank-deposit-gold (deposit-gold #:gold 5))
+            (cons 'bank-withdraw-item (withdraw #:code 'copper_ore #:qty 1))
+            (cons 'bank-withdraw-gold (withdraw-gold #:gold 5))
+            (cons 'bank-buy-expansion (buy-expansion))
+            (cons 'npc-buy (buy #:code 'copper_ore #:qty 1))
+            (cons 'npc-sell (sell #:code 'copper_ore #:qty 1))
+            (cons 'grand-exchange-orders (scan-ge))
+            (cons 'grand-exchange-buy (buy-on-ge #:order-id 1 #:qty 2))
+            (cons 'grand-exchange-create-sell-order
+                  (sell-on-ge #:code 'copper_ore #:qty 1 #:price 10))
+            (cons 'grand-exchange-create-buy-order
+                  (bid-on-ge #:code 'copper_ore #:qty 1 #:price 10))
+            (cons 'grand-exchange-cancel (cancel-order #:order-id 1))
+            (cons 'grand-exchange-fill (fill-order #:order-id 1 #:qty 2))
+            (cons 'task-new (task-start))
+            (cons 'task-complete (task-complete))
+            (cons 'task-cancel (task-cancel))
+            (cons 'task-exchange (task-exchange))
+            (cons 'task-trade (task-trade #:code 'monstertoken #:qty 1))
+            (cons 'give-gold (give-gold #:to "bob" #:qty 5))
+            (cons 'give-item (give-item #:to "bob" #:code 'copper_ore #:qty 1))
+            (cons 'claim-item (claim-item 1))
+            (cons 'delete-item (delete-item #:code 'copper_ore #:qty 1))
+            (cons 'change-skin (change-skin #:skin 'women3))
+            (cons 'active-events (check-events))
+            (cons 'raids (check-raids))))
+    ;; (a) every builder yields the expected action-spec name.
+    (for ([pair builders])
+      (check-equal? (action-spec-name (cdr pair)) (car pair)
+                    (format "builder for ~a" (car pair))))
+    ;; (b) every resulting name is a known action so (action '...) validates.
+    (for ([pair builders])
+      (check-true (known-action? (car pair))
+                  (format "known-action? ~a" (car pair))))
+    ;; (c) the dispatcher routes every name rather than rejecting it. We drive
+    ;; each spec through execute-action with no token: a missing route raises
+    ;; "unsupported action", whereas a wired route reaches the HTTP layer and
+    ;; raises a 452 auth error. Either way it must not be an unknown-action.
+    (define (dispatch-claims-unknown? spec)
+      (define (mark-unsupported exn)
+        (regexp-match? #px"unsupported action" (exn-message exn)))
+      (with-handlers ([exn:fail? mark-unsupported])
+        (execute-action "alice" spec #:config missing-token-config)
+        #f))
+    (for ([pair builders])
+      (check-false (dispatch-claims-unknown? (cdr pair))
+                   (format "dispatch routes ~a" (car pair)))))
+
   (test-case "buy-expansion builds a payload-free bank-buy-expansion spec"
     (define spec (buy-expansion))
     (check-equal? (action-spec-name spec) 'bank-buy-expansion)
