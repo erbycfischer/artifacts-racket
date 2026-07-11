@@ -1332,6 +1332,14 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "gems-history forwards to get-gems-history and requires a token"
+    ;; Same auth-gated /my shape as purchase-history: a token-less config raises
+    ;; the structured 452 only after the form delegates to get-gems-history.
+    (define error (capture-api-error (lambda () (gems-history #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
   (test-case "active-events forwards to get-active-events"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1355,6 +1363,7 @@
                    bank-items
                    pending-items
                    purchase-history
+                   gems-history
                    rate-limits
                    item
                    monster

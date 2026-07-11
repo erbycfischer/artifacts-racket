@@ -74,6 +74,7 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | My GE history | `get-my-grand-exchange-history` |
 | Pending items | `get-pending-items` |
 | Purchase history | `get-purchase-history` |
+| Gems history | `get-gems-history` |
 | Rate limits | `get-rate-limits` |
 | Account logs | `get-account-logs` |
 | Character logs | `get-character-logs` |

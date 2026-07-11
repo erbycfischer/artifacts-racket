@@ -33,6 +33,7 @@
          get-my-grand-exchange-history
          get-pending-items
          get-purchase-history
+         get-gems-history
          get-rate-limits
          get-account-logs
          get-character-logs
@@ -305,6 +306,12 @@
 ;; any request leaves the process.
 (define (get-purchase-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get "/my/purchase_history" #:page page #:size size #:config config #:auth? #t))
+
+;; Gem credit and debit records (purchases, conversions, refunds) for the
+;; account. Same auth-gated /my shape as purchase history: a missing token
+;; raises the structured 452 before any request leaves the process.
+(define (get-gems-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get "/my/gems_history" #:page page #:size size #:config config #:auth? #t))
 
 (define (get-rate-limits #:config [config (current-config)])
   (api-get "/my/rates" #:config config #:auth? #t))

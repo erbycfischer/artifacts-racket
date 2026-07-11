@@ -23,6 +23,7 @@
          bank-items
          pending-items
          purchase-history
+         gems-history
          rate-limits
          item
          monster
@@ -66,6 +67,11 @@
 ;; Your account's gem and subscription purchase records, paginated.
 (define (purchase-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (get-purchase-history #:page page #:size size #:config config))
+
+;; Your account's gem credit and debit records (purchases, conversions,
+;; refunds), paginated straight through to get-gems-history.
+(define (gems-history #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (get-gems-history #:page page #:size size #:config config))
 
 ;; Current rate-limit budget for the authenticated account.
 (define (rate-limits #:config [config (current-config)])
