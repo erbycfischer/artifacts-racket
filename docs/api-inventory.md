@@ -24,7 +24,8 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - `artifacts/scheduler.rkt`: cooldown-aware job ordering primitives.
 - `artifacts/world-cache.rkt`: encyclopedia and world map disk cache + `load-world-index`.
 - `artifacts/runner.rkt`: bot execution loop, character provisioning, and planner dispatch.
-- `artifacts/planner.rkt`: role-based planning and cooldown helpers.
+- `artifacts/planner.rkt`: role-based planning and cooldown helpers, including `cooldown-from-response` (extracts seconds from a live action response) and `update-character-cooldown` (folds the response's `cooldown` / `cooldown_expiration` into a character's `cooldown_expiration` so `cooldown-remaining` and the scheduler clock see real next-ready time).
+- `artifacts/runner.rkt`: after a successful live action, `run-bot-once` folds the response's cooldown back into the returned character snapshot; `run-bot-loop` then gates the next tick via `suggested-loop-sleep` → `cooldown-jobs-from-characters`, which builds `make-job` entries with `ready-at` derived from the updated expiration. Dry-run keeps the synthetic character (no live response), so behavior is unchanged.
 - `artifacts/lang/runtime.rkt`: `#lang artifacts` specs, action validation, and executor mappings into the HTTP layer.
 - `artifacts/lang/actions.rkt`: readable action builders (`gather`, `buy`, `craft`, Grand Exchange helpers, etc.).
 - `artifacts/dispatch.rkt`: shared action dispatch for the runner and DSL executor.
@@ -39,5 +40,4 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 ## Remaining Gaps
 
 - Full official realtime WebSocket ingest in the visual client bridge (REST polling is the production path).
-- Cooldown/rate-limit state that updates from live action responses into a shared scheduler clock.
 - Goal conditions (`when-low-hp`, inventory thresholds) beyond ordered action preference.

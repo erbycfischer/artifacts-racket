@@ -13,6 +13,8 @@
          hp-ratio
          cooldown-ready?
          cooldown-remaining
+         cooldown-from-response
+         update-character-cooldown
          content-at-character
          on-content?
          nearest-typed-content
@@ -20,8 +22,10 @@
          plan-preferred-action
          best-safe-monster
          best-gather-resource
+         best-gather-plan
          role-skill
          character-first-goal
+         forms->action-specs
          goal-preferred-actions
          when-low-hp
          when-inventory-full
@@ -72,6 +76,54 @@
 
 (define (cooldown-ready? char [now (current-seconds)])
   (<= (cooldown-remaining char now) 0))
+
+;; Extract the cooldown seconds an action response reports. Artifacts echoes
+;; both an absolute `cooldown_expiration` (ISO timestamp) and a relative
+;; `cooldown` (seconds) inside `data`. We trust `cooldown` when present because
+;; it is already a number; callers that need an absolute clock can read
+;; `cooldown_expiration` directly. Missing/empty fields yield 0 so a response
+;; with no cooldown reads as "ready" rather than crashing.
+(define (response-data-value response key)
+  (define data (cond
+                [(and (hash? response) (hash-has-key? response 'data)) (hash-ref response 'data)]
+                [(hash? response) response]
+                [else #f]))
+  (if (hash? data) (hash-ref data key #f) #f))
+
+(define (cooldown-from-response response)
+  (define raw (response-data-value response 'cooldown))
+  (cond
+    [(and (number? raw) (> raw 0)) raw]
+    [(and (number? raw) (<= raw 0)) 0]
+    [else 0]))
+
+;; Return an updated character hash whose `cooldown_expiration` is set to the
+;; absolute time the action's cooldown clears, derived from the response. This
+;; lets `cooldown-remaining` (which already parses `cooldown_expiration`) and
+;; the scheduler's `cooldown-jobs-from-characters` gate the next tick on the
+;; real live cooldown instead of the snapshot's stale `cooldown`. When the
+;; response carries no usable cooldown we leave the character untouched (ready).
+(define (update-character-cooldown char response [now (current-seconds)])
+  (cond
+    [(not (hash? char)) char]
+    [(not response) char]
+    [else
+     (define expiration-raw (response-data-value response 'cooldown_expiration))
+     (define expiration
+       (cond
+         [(and (number? expiration-raw) (> expiration-raw 1000000000)) expiration-raw]
+         [(and (number? expiration-raw) (>= expiration-raw 0))
+          (+ now expiration-raw)] ; relative seconds mislabeled as expiration
+         [else #f]))
+     (define seconds (cooldown-from-response response))
+     (define absolute
+       (cond
+         [expiration expiration]
+         [(> seconds 0) (+ now seconds)]
+         [else #f]))
+     (if absolute
+         (hash-set char 'cooldown_expiration absolute)
+         char)]))
 
 (define (content-at-character char)
   (define interactions (character-field char 'interactions #f))
@@ -249,6 +301,18 @@
                            skill)
                    #:priority 65))]))
 
+;; Inventory-aware gathering. Before committing to a gather we check whether
+;; the bag is close to capacity: a character with only `reserve` slots left
+;; can't hold another haul, so a bank run wins over another swing of the pick.
+;; Otherwise we fall through to the plain plan-gather behavior (gather when
+;; already on the node, move-to-resource when not). `best-gather-plan` is what
+;; the role dispatcher calls, so the near-full branch is live for gatherers.
+(define (best-gather-plan char world resources skill #:reserve [reserve 1])
+  (cond
+    [(inventory-full? char #:reserve reserve)
+     (plan-bank-trip char world)]
+    [else (plan-gather char world resources skill)]))
+
 (define (plan-trade char world)
   (cond
     [(on-content? char "grand_exchange")
@@ -390,7 +454,7 @@
     [(fight) (plan-combat char world monsters)]
     [(gather)
      (define skill (or (role-skill role) 'mining))
-     (plan-gather char world resources skill)]
+     (best-gather-plan char world resources skill #:reserve 1)]
     [(bank-deposit-item) (plan-bank-trip char world)]
     [(bank-withdraw-item)
      (and (on-content? char "bank")
@@ -432,7 +496,7 @@
          (plan-bank-trip char world))]
     [(mining woodcutting fishing alchemy gatherer)
      (define skill (or (role-skill role) 'mining))
-     (or (plan-gather char world resources skill)
+     (or (best-gather-plan char world resources skill #:reserve 1)
          (plan-bank-trip char world))]
     [(crafter crafting)
      (or (plan-craft char world)

@@ -104,8 +104,18 @@
                   (normalize-account-name account-name)
                   (map validate-character-form forms)))
 
+(define (ensure-strategy-form who form)
+  ;; A strategy may hold plain action-specs and high-level helpers that return
+  ;; goal-specs (e.g. ge-trade), just like a character body or a pipeline.
+  ;; run-strategy-tick flattens any goal-specs through the same path as the
+  ;; character pipelines, so both shapes are valid strategy forms.
+  (cond
+    [(action-spec? form) form]
+    [(goal-spec? form) form]
+    [else (validate-action-form who form)]))
+
 (define (make-strategy-spec name forms)
-  (strategy-spec name (map (lambda (form) (ensure-action-spec 'strategy form)) forms)))
+  (strategy-spec name (map (lambda (form) (ensure-strategy-form 'strategy form)) forms)))
 
 (define-syntax-rule (artifacts-module-begin form ...)
   (#%module-begin form ...))
@@ -181,17 +191,22 @@
 (define-syntax-rule (strategy name form ...)
   (make-strategy-spec 'name (list form ...)))
 
+;; A goal body may mix plain actions, guards, conditionals, and higher-level
+;; helpers that themselves return goal-specs. A nested goal-spec is flattened
+;; into the parent goal (its actions spliced in) so helpers like sell-surplus
+;; or ge-trade drop straight into a pipeline without an extra name. expand-guards
+;; still resolves every guard against the live character later.
+(define (ensure-goal-form who form)
+  (cond
+    [(goal-spec? form) (goal-spec-actions form)]
+    [(guard-spec? form) (list form)]
+    [else (list (ensure-action-spec who form))]))
+
+;; Map each body form to a list of specs, then splice them into one flat goal.
 (define (goal target . body)
   (unless (symbol? target)
     (error 'goal "expected symbolic target, got ~v" target))
-  (goal-spec target (map (lambda (form) (ensure-goal-form 'goal form)) body)))
-
-;; A goal body may mix plain actions and guards/conditionals. Both are kept as
-;; specs; expand-guards resolves the guards against the live character later.
-(define (ensure-goal-form who form)
-  (cond
-    [(guard-spec? form) form]
-    [else (ensure-action-spec who form)]))
+  (goal-spec target (apply append (map (lambda (form) (ensure-goal-form 'goal form)) body))))
 
 (define (action name . payload)
   (unless (symbol? name)

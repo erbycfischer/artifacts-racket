@@ -10,9 +10,8 @@
 (bot workshop
   (character smith #:role 'crafter #:as (env-as-name 'smith)
     (pipeline 'refine-loop
-      (craft #:code 'copper_bar #:qty 1)
-      (rest)
-      (bank-when-full)))
+      (craft-loop #:code 'copper_bar #:qty 1)
+      (rest)))
   (character quartermaster #:role 'tasker #:as (env-as-name 'quartermaster)
     (pipeline 'task-loop
       (task-complete)

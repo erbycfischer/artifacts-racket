@@ -18,7 +18,10 @@
          combat-loop
          sell-surplus
          bank-when-full
-         rest-when-low)
+         rest-when-low
+         craft-loop
+         ge-trade
+         gather-loop)
 
 ;; Gather the character's role resource, then bank everything the moment the
 ;; bag is within `reserve` slots of capacity. #:resource names the target for
@@ -58,3 +61,30 @@
   (goal-spec 'sell-surplus
              (list (guard-spec (lambda (char) (when-on-content char "npc"))
                                (list (sell #:code code #:qty qty))))))
+
+;; Craft `qty` of `code`, banking the moment the bag fills so a long craft run
+;; never stalls on a full inventory. The craft itself waits for a workshop tile
+;; (the planner routes there), and the bank guard waits for a full bag.
+(define (craft-loop #:code code #:qty [qty 1] #:reserve [reserve 1])
+  (goal-spec 'craft-loop
+             (list (craft #:code code #:qty qty)
+                   (bank-when-full #:reserve reserve))))
+
+;; List `qty` of `code` on the Grand Exchange at `price` per unit. Like
+;; sell-surplus, it only acts while standing on the exchange tile, so the bot
+;; won't detour to the GE just to post an order. Pair it with scan-ge in a
+;; strategy to watch for fills.
+(define (ge-trade #:code code #:qty [qty 1] #:price price)
+  (goal-spec 'ge-trade
+             (list (guard-spec (lambda (char) (when-on-content char "grand_exchange"))
+                               (list (sell-on-ge #:code code #:qty qty #:price price))))))
+
+;; Gather the character's role resource, banking the moment the bag nears
+;; capacity (within `reserve` slots). Unlike mine-until-full, which hard-codes
+;; the mining role, gather-loop works for any gatherer role — the planner
+;; derives the skill (mining/woodcutting/fishing/alchemy) from the character's
+;; role, so a woodcutter or fisher drops straight in with just `(gather-loop)`.
+(define (gather-loop #:skill [skill #f] #:reserve [reserve 1])
+  (goal-spec 'gather-loop
+             (list (gather)
+                   (bank-when-full #:reserve reserve))))

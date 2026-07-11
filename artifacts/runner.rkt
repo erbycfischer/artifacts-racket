@@ -22,6 +22,8 @@
          bot-character-names
          missing-bot-character-names
          ensure-bot-characters
+         strategy-actor-spec
+         run-strategy-tick
          execute-planned-action
          route-for-plan
          ge-anchor-point
@@ -234,6 +236,10 @@
     form))
 
 (define (strategy-actor-spec bot)
+  ;; Prefer the character already playing the market, since GE/event watching
+  ;; naturally belongs to a trader; otherwise fall back to the first character.
+  ;; The bot may arrive already bound to the account (via bind-bot-to-account),
+  ;; in which case the actor's live name is the one we dispatch through.
   (define specs (bot-characters bot))
   (or (for/or ([spec specs]
                #:when (memq (character-spec-role spec) '(trader market)))
@@ -248,13 +254,17 @@
   (define strategy (bot-strategy bot*))
   (when strategy
     (define actor (strategy-actor-spec bot*))
-    (when actor
-      (define live-name (character-spec-live-name actor))
+    (define live-name (and actor (character-spec-live-name actor)))
+    ;; A strategy runs helpers (goal-specs like (scan-ge) / (ge-trade ...)) and
+    ;; plain actions through the same flatten+resolve path as character pipelines.
+    ;; If the strategy needs a character but none is bound yet, skip cleanly
+    ;; instead of crashing: a strategy is advisory, not mandatory.
+    (when (and live-name (non-empty-string? live-name))
       (printf "[strategy ~a via ~a]\n"
               (strategy-spec-name strategy)
               live-name)
       (flush-output)
-      (for ([spec (strategy-spec-forms strategy)])
+      (for ([spec (forms->action-specs (strategy-spec-forms strategy))])
         (define action-name (action-spec-name spec))
         (printf "  ~a\n" action-name)
         (flush-output)
@@ -319,6 +329,16 @@
         (bind-bot-to-account bot my-chars)
         bot))
   (run-strategy-tick bot* #:config config #:dry-run? dry-run?)
+  (define updated-chars my-chars)
+  (define (record-cooldown live-name result)
+    ;; Fold a live action's cooldown back into the shared character snapshot so
+    ;; the loop's sleep (via cooldown-jobs-from-characters) gates on the real
+    ;; next-ready time rather than the stale snapshot cooldown.
+    (set! updated-chars
+          (for/list ([c updated-chars])
+            (if (and (hash? c) (equal? (hash-ref c 'name #f) live-name))
+                (update-character-cooldown c result)
+                c))))
   (define results
     (for/list ([spec (bot-characters bot*)])
       (define tag (symbol->string (character-spec-tag spec)))
@@ -359,8 +379,11 @@
                           (action . (symbol->string (planned-action-name plan)))
                           (reason . (planned-action-reason plan)))
                   (execute-planned-action live-name plan #:config config)))
+            ;; In dry-run the synthetic character carries no live response, so
+            ;; nothing changes; with a token we fold the action's cooldown in.
+            (unless dry-run? (record-cooldown live-name result))
             (list tag 'acted result)])])))
-  (values results my-chars))
+  (values results updated-chars))
 
 (define (cooldown-jobs-from-characters characters [now (current-seconds)])
   (for/list ([char characters] #:when (hash? char))

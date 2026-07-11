@@ -1,10 +1,9 @@
 #lang artifacts
 
-;; Minimal showcase of the high-level helpers. For live play, see
-;; examples/apex-bot.rkt; this file is here to read quickly and compile.
-;;
-;; Each helper returns a goal/pipeline that the planner keeps dormant until the
-;; world warrants action, so the bots below are just intent, no bookkeeping.
+;; The smallest readable bot. It mirrors the example in docs/quickstart.md:
+;; a couple of characters built from helpers, plus a light account strategy.
+;; This file exists to read quickly and compile; it does not run a play loop on
+;; its own, so `raco make examples/starter-bot.rkt` is enough to verify it.
 
 (bot starter
   (character miner #:role 'mining
