@@ -15,3 +15,8 @@
 - Artifacts MMO HTTP auth uses `Authorization: Bearer <token>`; invalid or missing auth can return status 452 (see https://docs.artifactsmmo.com/api_guide/authorization/).
 - Watching bots in 3D requires only the visual bridge polling official character state — zero bot-side hooks.
 - The visualizer bridge requires this package on `PLTCOLLECTS` (or `raco pkg install --link`).
+- Git `origin` for this repo MUST be `https://github.com/erbycfischer/artifacts-racket.git` — never the sibling `artifacts-mmo-ai-3d-visualizer` repo (it was once pointed at the visualizer by mistake, which would smear the framework's history into the client repo).
+- `raco test tests/artifacts-test.rkt` is the authoritative green check. Running `racket tests/artifacts-test.rkt` hides failures because the suite lives in `(module+ test …)`, which only executes under `raco test`.
+- `#lang artifacts` example bots only compile via `raco make` after the package is linked as the `artifacts` collection (`raco pkg install --link` or a symlink into the Racket collects dir). The sandbox's missing `syntax/module-reader` otherwise blocks `raco make` of `examples/`.
+- `compiled/` bytecode (`*.zo`, `*.dep`) and `.env`/`.env.local` are gitignored and must not be staged or committed.
+- The coordinator agent commits and pushes batched changes; the individual `#lang artifacts` build subagents intentionally do NOT commit or push their own work.

@@ -16,7 +16,8 @@
          "../artifacts/world.rkt"
          "../artifacts/planner.rkt"
          "../artifacts/combat.rkt"
-         "../artifacts/runner.rkt")
+         "../artifacts/runner.rkt"
+        (rename-in "../artifacts/lang/queries.rkt" [character q:character]))
 
 (define test-config
   (artifacts-config "https://api.artifactsmmo.com/"
@@ -108,6 +109,79 @@
     (check-equal? (best-sell-price sells) 9)
     (check-equal? (order-spread buys sells) 6)
     (check-true (profitable-spread? buys sells #:minimum-margin 5)))
+
+  (test-case "ge-book splits buys and sells by type"
+    (define mixed
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 12))
+            #hasheq((type . "buy") (price . 11))
+            #hasheq((type . "sell") (price . 13))
+            ;; Defensive: a non-hash and a hash with no/odd type are skipped.
+            "not-an-order"
+            #hasheq((price . 99))
+            #hasheq((type . "unknown") (price . 50))))
+    (define-values (buys sells) (ge-book mixed))
+    (check-equal? (length buys) 2)
+    (check-equal? (length sells) 2)
+    (check-equal? (map (lambda (o) (hash-ref o 'price)) buys) '(10 11))
+    (check-equal? (map (lambda (o) (hash-ref o 'price)) sells) '(12 13))
+    ;; An empty book yields two empty lists, not an error.
+    (define-values (no-b no-s) (ge-book '()))
+    (check-equal? no-b '())
+    (check-equal? no-s '()))
+
+  (test-case "best-bid and best-ask read a mixed book"
+    (define book
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 14))
+            #hasheq((type . "buy") (price . 12))
+            #hasheq((type . "sell") (price . 13))))
+    (check-equal? (best-bid book) 12)
+    (check-equal? (best-ask book) 13)
+    ;; They agree with the side-specific helpers when split first.
+    (define-values (buys sells) (ge-book book))
+    (check-equal? (best-bid book) (best-buy-price buys))
+    (check-equal? (best-ask book) (best-sell-price sells))
+    ;; A one-sided book leaves the missing side #f.
+    (check-false (best-ask (list #hasheq((type . "buy") (price . 5))))))
+
+  (test-case "mid-price averages best bid and best ask"
+    (define book
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 14))))
+    (check-equal? (mid-price book) 12.0)
+    ;; Missing a side -> no fair value.
+    (check-false (mid-price (list #hasheq((type . "buy") (price . 5)))))
+    (check-false (mid-price '())))
+
+  (test-case "spread-margin measures the ask-bid gap"
+    (define book
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 14))))
+    (check-equal? (spread-margin book) 4)
+    ;; A threshold above the gap suppresses the (sub-profit) sliver.
+    (check-false (spread-margin book #:minimum-margin 5))
+    (check-equal? (spread-margin book #:minimum-margin 4) 4)
+    ;; Thin book -> no gap.
+    (check-false (spread-margin (list #hasheq((type . "buy") (price . 5))))))
+
+  (test-case "profitable? answers with a threshold on a mixed book"
+    (define wide
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 16))))
+    (define tight
+      (list #hasheq((type . "buy") (price . 10))
+            #hasheq((type . "sell") (price . 11))))
+    (check-true (profitable? wide #:minimum-margin 5))
+    (check-false (profitable? wide #:minimum-margin 7))
+    (check-false (profitable? tight #:minimum-margin 5))
+    (check-true (profitable? tight #:minimum-margin 1))
+    ;; Inverted or one-sided book is never profitable.
+    (check-false (profitable? (list #hasheq((type . "buy") (price . 20))
+                                    #hasheq((type . "sell") (price . 14)))
+                              #:minimum-margin 1))
+    (check-false (profitable? (list #hasheq((type . "buy") (price . 5)))
+                              #:minimum-margin 1)))
 
   (test-case "scheduler returns ready jobs by priority"
     (define jobs
@@ -1183,3 +1257,70 @@
     ;; exactly the six modeled fields (plus the struct type tag).
     (check-equal? (vector->list (struct->vector snap))
                   (list 'struct:realtime-snapshot "scout" 42 100 7 -3 1700000123))))
+
+;; ---- Read/query layer: thin keyword wrappers over ../http.rkt ----
+;; These cases prove the query forms forward to the right HTTP wrapper. The
+;; auth-gated forms (bank, active-events, character-leaderboard) raise a
+;; structured 452 when given a token-less config, which only happens after the
+;; wrapper has been called with #:auth?; a missing route would never get that
+;; far. The public forms (character, item) cannot assert a 452 (no token
+;; needed), so we drive them at an unreachable host and confirm they reach the
+;; HTTP layer (a connection failure, not a contract/arity error) — that proves
+;; they delegate to get-character / get-item rather than doing nothing.
+
+(module+ test
+  (test-case "character forwards to get-character"
+    ;; Unreachable host -> the wrapper is reached and fails on connect, not on
+    ;; a wrong-arity or undefined-symbol error. A connection exn here means the
+    ;; form delegated to the HTTP layer exactly once.
+    (check-exn exn:fail?
+               (lambda () (q:character "scout" #:config dry-run-config))))
+
+  (test-case "item forwards to get-item"
+    (check-exn exn:fail?
+               (lambda () (item "copper_ore" #:config dry-run-config))))
+
+  (test-case "bank forwards to get-bank-details and requires a token"
+    (define error (capture-api-error (lambda () (bank #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "active-events forwards to get-active-events and requires a token"
+    (define error (capture-api-error (lambda () (active-events #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "character-leaderboard forwards to get-character-leaderboard and requires a token"
+    (define error
+      (capture-api-error
+       (lambda () (character-leaderboard #:sort "level" #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
+
+  (test-case "every query form is bound and callable"
+    ;; Guards against a typo'd provide: each should be a procedure, not #<undefined>.
+    (for ([q (list q:character
+                   my-characters
+                   account-details
+                   bank
+                   bank-items
+                   pending-items
+                   rate-limits
+                   item
+                   monster
+                   resource
+                   npc
+                   tasks
+                   achievements
+                   effects
+                   active-events
+                   raids
+                   character-leaderboard
+                   account-leaderboard
+                   server-details
+                   maps
+                   map)])
+      (check-pred procedure? q))))

@@ -10,6 +10,7 @@
          (struct-out exn:fail:artifacts-api)
          api-get
          api-post
+         ensure-authenticated!
          api-error-from-response
          decode-api-response
          request-url
@@ -143,6 +144,10 @@
              #f
              #f))
 
+;; Raises a structured 452 api-error when the config carries no usable token.
+;; Exported so callers (like the realtime polling layer) can refuse to fire a
+;; public, non-auth-gated endpoint with no credentials instead of letting the
+;; request silently fail mid-network.
 (define (ensure-authenticated! config)
   (unless (present-token? (artifacts-config-token config))
     (raise-api-error (missing-auth-error))))

@@ -6,7 +6,13 @@
          profitable-spread?
          order-quantity
          side-depth
-         score-spread)
+         score-spread
+         ge-book
+         best-bid
+         best-ask
+         mid-price
+         spread-margin
+         profitable?)
 
 (define (order-price order)
   (hash-ref order 'price +inf.0))
@@ -50,3 +56,52 @@
               [depth-part (min 0.25 (/ (log (add1 (max 0 depth))) 10.0))]
               [raw (+ (* 0.85 spread-part) depth-part)])
          (min 1.0 raw))))
+
+;; Split a mixed GE book into (values buys sells) by each order's 'type field.
+;; Orders that aren't hashes or lack a recognized type are dropped rather than
+;; crashing the caller, so a half-parsed API response never takes the book down.
+(define (ge-book orders)
+  (define buys '())
+  (define sells '())
+  (for ([o orders])
+    (when (hash? o)
+      (define side (hash-ref o 'type #f))
+      (cond
+        [(equal? side "buy") (set! buys (cons o buys))]
+        [(equal? side "sell") (set! sells (cons o sells))])))
+  (values (reverse buys) (reverse sells)))
+
+;; Best bid/ask read a mixed book directly, filtering on type instead of forcing
+;; the caller to pre-split. They are convenience wrappers over best-buy-price /
+;; best-sell-price, which still take a single side.
+(define (best-bid orders)
+  (define-values (buys sells) (ge-book orders))
+  (void sells)
+  (best-buy-price buys))
+
+(define (best-ask orders)
+  (define-values (buys sells) (ge-book orders))
+  (void buys)
+  (best-sell-price sells))
+
+;; Fair-value midpoint between best bid and best ask; #f when either side is
+;; missing so callers never average a phantom number into a price.
+(define (mid-price orders)
+  (define bid (best-bid orders))
+  (define ask (best-ask orders))
+  (and bid ask (/ (+ bid ask) 2.0)))
+
+;; Numeric gap from best ask down to best bid. A positive result is the margin a
+;; maker could capture; #f when the book is too thin. minimum-margin floors the
+;; result so a sub-threshold gap returns #f instead of a misleading sliver.
+(define (spread-margin orders #:minimum-margin [minimum-margin 0])
+  (define bid (best-bid orders))
+  (define ask (best-ask orders))
+  (define gap (and bid ask (- ask bid)))
+  (and gap (>= gap minimum-margin) gap))
+
+;; Boolean convenience over profitable-spread? that swallows the two-side split:
+;; hand it a mixed book and a threshold, get a yes/no.
+(define (profitable? orders #:minimum-margin [minimum-margin 1])
+  (define-values (buys sells) (ge-book orders))
+  (profitable-spread? buys sells #:minimum-margin minimum-margin))
