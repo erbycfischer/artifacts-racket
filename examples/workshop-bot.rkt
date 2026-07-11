@@ -11,8 +11,8 @@
   (character smith #:role 'crafter #:as (env-as-name 'smith)
     (pipeline 'refine-loop
       (craft #:code 'copper_bar #:qty 1)
-      (deposit-all)
-      (rest)))
+      (rest)
+      (bank-when-full)))
   (character quartermaster #:role 'tasker #:as (env-as-name 'quartermaster)
     (pipeline 'task-loop
       (task-complete)
@@ -21,7 +21,7 @@
   (character buyer #:role 'trader #:as (env-as-name 'buyer)
     (pipeline 'supply-run
       (buy #:code 'small_health_potion #:qty 3)
-      (sell #:code 'copper_ore #:qty 5)
+      (sell-surplus #:code 'copper_ore #:qty 5)
       (deposit-all)))
   (strategy market-watch
     (scan-ge)

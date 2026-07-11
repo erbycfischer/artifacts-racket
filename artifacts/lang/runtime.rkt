@@ -7,6 +7,7 @@
          "../planner.rkt"
          "../runner.rkt"
          "./actions.rkt"
+         "./helpers.rkt"
          (for-syntax syntax/parse))
 
 (provide (rename-out [artifacts-module-begin #%module-begin])
@@ -29,6 +30,7 @@
          ensure-characters
          play
          (all-from-out "./actions.rkt")
+         (all-from-out "./helpers.rkt")
          (all-from-out "../dsl-forms.rkt")
          (all-from-out "../core.rkt")
          (all-from-out "../runner.rkt"))

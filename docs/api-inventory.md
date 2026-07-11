@@ -20,6 +20,7 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - `artifacts/http.rkt`: REST wrappers, auth headers, JSON request/response helpers, and API error representation.
 - `artifacts/world.rkt`: map indexing and nearest-content lookup over API-shaped map hashes.
 - `artifacts/market.rkt`: local Grand Exchange spread helpers.
+- `artifacts/combat.rkt`: fight matchup scoring (`simulate-fight-score`, `local-combat-score`, `matchup-score`) combining API simulation, local combat math, and equipment suggestions.
 - `artifacts/scheduler.rkt`: cooldown-aware job ordering primitives.
 - `artifacts/world-cache.rkt`: encyclopedia and world map disk cache + `load-world-index`.
 - `artifacts/runner.rkt`: bot execution loop, character provisioning, and planner dispatch.
@@ -39,5 +40,4 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 
 - Full official realtime WebSocket ingest in the visual client bridge (REST polling is the production path).
 - Cooldown/rate-limit state that updates from live action responses into a shared scheduler clock.
-- Fight matchup scoring that combines API simulation, local combat math, and equipment choices.
 - Goal conditions (`when-low-hp`, inventory thresholds) beyond ordered action preference.

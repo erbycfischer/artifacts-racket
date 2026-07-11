@@ -1,6 +1,8 @@
 #lang racket
 
 (require "world.rkt"
+         "combat.rkt"
+         "config.rkt"
          "dsl-forms.rkt")
 
 (provide (struct-out planned-action)
@@ -23,7 +25,8 @@
          goal-preferred-actions
          when-low-hp
          when-inventory-full
-         when-on-content)
+         when-on-content
+         safe-win-threshold)
 
 (struct planned-action (name payload reason priority) #:transparent)
 
@@ -137,15 +140,42 @@
                   reason
                   priority))
 
-(define (best-safe-monster char monsters)
+;; Below this win-probability estimate a fight is treated as unwinnable and
+;; skipped unless it's the only candidate on the board.
+(define safe-win-threshold 0.5)
+
+;; Score every reachable monster with matchup-score, then pick the safest.
+;; For pruning we prefer monsters within one level above the character, but the
+;; level window must never be the thing that leaves the bot with nothing to do:
+;; if no monster survives that window we fall back to the full board, and only
+;; return #f once we genuinely have no candidate at all. Among what's left, we
+;; take the safest by win-probability; when every candidate is hard we still
+;; pick the least-bad one rather than bailing out.
+(define (best-safe-monster char monsters #:config [config (current-config)])
   (define level (character-field char 'level 1))
-  (define candidates
+  (define in-window
     (for/list ([monster monsters]
                #:when (and (hash? monster)
                            (<= (hash-ref monster 'level 999) (+ level 1))))
-      monster))
-  (and (pair? candidates)
-       (argmax (lambda (monster) (hash-ref monster 'level 0)) candidates)))
+      (define match (matchup-score char monster #:config config))
+      (cons match monster)))
+  (define scored (if (pair? in-window) in-window
+                     (for/list ([monster monsters]
+                                #:when (hash? monster))
+                       (define match (matchup-score char monster #:config config))
+                       (cons match monster))))
+  (cond
+    [(null? scored) #f]
+    [else
+     (define safe
+       (filter (lambda (entry)
+                 (define prob (hash-ref (car entry) 'win-probability #f))
+                 (or (not (number? prob))
+                     (>= prob safe-win-threshold)))
+               scored))
+     (define pool (if (pair? safe) safe scored))
+     (define best (argmax (lambda (entry) (hash-ref (car entry) 'score 0)) pool))
+     (cdr best)]))
 
 (define (resource-matches-skill? resource skill)
   (define skill-value (hash-ref resource 'skill #f))

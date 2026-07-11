@@ -6,12 +6,14 @@
          net/url
          "../artifacts/config.rkt"
          "../artifacts/http.rkt"
-         "../artifacts/lang/runtime.rkt"
+         (except-in "../artifacts/lang/runtime.rkt" when-low-hp when-inventory-full when-on-content)
+         "../artifacts/lang/helpers.rkt"
          "../artifacts/dsl-forms.rkt"
          "../artifacts/market.rkt"
          "../artifacts/scheduler.rkt"
          "../artifacts/world.rkt"
          "../artifacts/planner.rkt"
+         "../artifacts/combat.rkt"
          "../artifacts/runner.rkt")
 
 (define test-config
@@ -521,4 +523,168 @@
     (define not-bank (hasheq 'interactions (hasheq 'content #f)))
     (check-equal? (length (expand-guards (list direct) on-bank)) 1)
     (check-equal? (expand-guards (list direct) not-bank) '()))
+
+  (test-case "local-combat-score favors an easier, lower-level monster"
+    (define char #hasheq((level . 5) (max_hp . 100) (attack . 20) (defense . 10)))
+    (define easy #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1)))
+    (define hard #hasheq((code . "dragon") (level . 40) (hp . 500) (attack . 80) (defense . 60)))
+    (define easy-score (local-combat-score char easy))
+    (define hard-score (local-combat-score char hard))
+    (check-true (number? easy-score))
+    (check-true (number? hard-score))
+    (check-true (> easy-score hard-score))
+    ;; A same-level match should sit near the middle of the 0..1 scale.
+    (define even #hasheq((code . "peer") (level . 5) (hp . 100) (attack . 20) (defense . 10)))
+    (check-true (< (abs (- (local-combat-score char even) 0.5)) 0.25)))
+
+  (test-case "matchup-score falls back to local math without a token"
+    ;; A #f config fails before any request (no base-url), so simulate-fight-score
+    ;; must absorb the error and degrade to local math rather than propagating it.
+    (define char #hasheq((level . 5) (max_hp . 100) (attack . 20) (defense . 10)))
+    (define monster #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1)))
+    (define local-only (matchup-score char monster #:config #f))
+    (check-equal? (hash-ref local-only 'source) 'local)
+    (check-true (number? (hash-ref local-only 'score)))
+    (check-true (number? (hash-ref local-only 'win-probability)))
+    (check-true (string? (hash-ref local-only 'reason)))
+    (check-true (> (hash-ref local-only 'score) 0))
+    ;; A config with no token must not raise: whether the API is reachable or
+    ;; not, simulate-fight-score stays defensive and returns a usable matchup.
+    (define result (matchup-score char monster #:config missing-token-config))
+    (check-true (number? (hash-ref result 'score)))
+    (check-true (string? (hash-ref result 'reason))))
+
+  (test-case "suggest-equipment flags weapons/armor found in inventory"
+    (define char
+      (hasheq 'inventory
+              (list (hasheq 'code "iron_sword" 'quantity 1)
+                    (hasheq 'code "wooden_armor" 'quantity 1))))
+    (define monster (hasheq 'code "chicken" 'level 1))
+    (define equip (suggest-equipment char monster))
+    (check-equal? (hash-ref equip 'weapon) "iron_sword")
+    (check-equal? (hash-ref equip 'armor) "wooden_armor")
+    ;; No relevant gear -> no suggestion.
+    (define ungeared (hasheq 'inventory (list (hasheq 'code "apple" 'quantity 5))))
+    (check-false (suggest-equipment ungeared monster)))
+
+  (test-case "best-safe-monster skips unwinnable fights unless it's the only option"
+    (define char #hasheq((name . "A")
+                         (level . 3)
+                         (max_hp . 100)
+                         (hp . 100)
+                         (attack . 5)
+                         (defense . 5)
+                         (cooldown . 0)
+                         (inventory_max_items . 20)
+                         (inventory . ())
+                         (x . 0)
+                         (y . 0)
+                         (layer . "overworld")
+                         (map_id . 1)
+                         (interactions . #hasheq((content . #f)))))
+    ;; With a #f config, scoring is local and level-based. A much higher-level
+    ;; monster scores below threshold, so the safe (level-1) one wins.
+    (define monsters
+      (list #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1))
+            #hasheq((code . "boss") (level . 40) (hp . 500) (attack . 80) (defense . 60))))
+    (define chosen (best-safe-monster char monsters #:config #f))
+    (check-equal? (hash-ref chosen 'code) "chicken")
+    ;; When the only candidate is hard, the planner still returns it rather
+    ;; than leaving the bot with nothing to do.
+    (define only-hard (list #hasheq((code . "boss") (level . 40) (hp . 500) (attack . 80) (defense . 60))))
+    (check-equal? (hash-ref (best-safe-monster char only-hard #:config #f) 'code) "boss"))
+
+  (test-case "mine-until-full builds a gather + bank-when-full goal"
+    (define spec (mine-until-full #:resource 'copper_rocks))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'mine-until-full)
+    (define actions (goal-spec-actions spec))
+    (check-equal? (action-spec-name (car actions)) 'gather)
+    (define bank-guard (cadr actions))
+    (check-true (guard? bank-guard))
+    (check-equal? (action-spec-name (car (guard-spec-forms bank-guard))) 'bank-deposit-item)
+    ;; A roomy bag keeps the bank guard dormant, so preferred actions are just gather.
+    (define roomy (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                          'inventory_max_items 20 'interactions (hasheq 'content #f)
+                          'inventory (list (hasheq 'code "a" 'quantity 5))))
+    (define miner-spec (character-spec 'demo 'mining #f (list spec)))
+    (check-equal? (map action-spec-name (goal-preferred-actions miner-spec roomy)) '(gather))
+    ;; A full bag trips the guard, surfacing the bank-deposit-item step.
+    (define packed (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                           'inventory_max_items 20 'interactions (hasheq 'content #f)
+                           'inventory (list (hasheq 'code "a" 'quantity 20))))
+    (check-equal? (map action-spec-name (goal-preferred-actions miner-spec packed))
+                  '(bank-deposit-item gather)))
+
+  (test-case "combat-loop guards rest on low HP and still fights"
+    (define spec (combat-loop #:max-hp-ratio 0.5))
+    (check-true (goal-spec? spec))
+    (define actions (goal-spec-actions spec))
+    (define rest-guard (car actions))
+    (check-true (guard? rest-guard))
+    (check-equal? (action-spec-name (car (guard-spec-forms rest-guard))) 'rest)
+    (check-equal? (action-spec-name (cadr actions)) 'fight)
+    (check-true (guard? (caddr actions)))
+    ;; A hurt character rests first; the fight step is reached only after recovery.
+    (define hurt (hasheq 'hp 30 'max_hp 100 'cooldown 0
+                         'inventory_max_items 20 'interactions (hasheq 'content #f)
+                         'inventory (list)))
+    (define fighter-spec (character-spec 'demo 'combat #f (list spec)))
+    ;; Hurt: the rest guard fires and the fight step is also preferred (both
+    ;; resolve through the same goal). goal-preferred-actions returns them in
+    ;; reverse source order, so fight precedes rest in the list.
+    (check-equal? (map action-spec-name (goal-preferred-actions fighter-spec hurt)) '(fight rest))
+    ;; A healthy fighter yields (rest-guard dormant) -> fight -> bank guard dormant.
+    (define healthy (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                            'inventory_max_items 20 'interactions (hasheq 'content #f)
+                            'inventory (list)))
+    (check-equal? (map action-spec-name (goal-preferred-actions fighter-spec healthy)) '(fight))
+    ;; A healthy but packed fighter banks before returning to the fight loop.
+    (define healthy-packed (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                                   'inventory_max_items 20 'interactions (hasheq 'content #f)
+                                   'inventory (list (hasheq 'code "a" 'quantity 20))))
+    (check-equal? (map action-spec-name (goal-preferred-actions fighter-spec healthy-packed))
+                  '(bank-deposit-item fight)))
+
+  (test-case "sell-surplus only sells while standing on an NPC tile"
+    (define spec (sell-surplus #:code 'copper_ore #:qty 5))
+    (check-true (goal-spec? spec))
+    (define guard (car (goal-spec-actions spec)))
+    (check-true (guard? guard))
+    (define sell-action (car (guard-spec-forms guard)))
+    (check-equal? (action-spec-name sell-action) 'npc-sell)
+    (check-equal? (action-spec-payload sell-action)
+                  (list (hasheq 'code "copper_ore" 'quantity 5)))
+    (define at-npc (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                           'inventory_max_items 20 'interactions (hasheq 'content (hasheq 'type "npc" 'code "npc"))
+                           'inventory (list)))
+    (define trader-spec (character-spec 'demo 'trader #f (list spec)))
+    (check-equal? (map action-spec-name (goal-preferred-actions trader-spec at-npc)) '(npc-sell))
+    (define not-at-npc (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                               'inventory_max_items 20 'interactions (hasheq 'content #f)
+                               'inventory (list)))
+    (check-equal? (goal-preferred-actions trader-spec not-at-npc) '()))
+
+  (test-case "bank-when-full and rest-when-low guards resolve against the character"
+    (define bank-guard (bank-when-full #:reserve 1))
+    (check-true (guard? bank-guard))
+    (define packed (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                           'inventory_max_items 20 'interactions (hasheq 'content #f)
+                           'inventory (list (hasheq 'code "a" 'quantity 20))))
+    (check-equal? (action-spec-name (car (guard-spec-forms bank-guard))) 'bank-deposit-item)
+    (check-equal? (length (expand-guards (list bank-guard) packed)) 1)
+    (define rest-guard (rest-when-low #:max-hp-ratio 0.5))
+    (check-true (guard? rest-guard))
+    (check-equal? (action-spec-name (car (guard-spec-forms rest-guard))) 'rest)
+    (define hurt (hasheq 'hp 30 'max_hp 100 'cooldown 0
+                         'inventory_max_items 20 'interactions (hasheq 'content #f)
+                         'inventory (list)))
+    (check-equal? (length (expand-guards (list rest-guard) hurt)) 1)
+    (check-equal? (expand-guards (list rest-guard) packed) '()))
+
+  (test-case "buy-expansion builds a payload-free bank-buy-expansion spec"
+    (define spec (buy-expansion))
+    (check-equal? (action-spec-name spec) 'bank-buy-expansion)
+    (check-equal? (action-spec-payload spec) '())
+    (check-true (known-action? 'bank-buy-expansion)))
 )

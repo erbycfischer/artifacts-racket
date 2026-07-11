@@ -10,6 +10,7 @@
          fight
          deposit-all
          deposit-gold
+         buy-expansion
          withdraw
          withdraw-gold
          buy
@@ -69,6 +70,11 @@
 (define (deposit-gold #:gold [gold (and (null? '()) #f)] . rest)
   (define g (if (null? rest) (or gold 0) (car rest)))
   (action-spec 'bank-deposit-gold (list g)))
+
+;; Buy an extra bank slot. The API takes no payload, so the builder is a
+;; no-argument spec; the dispatcher already treats bank-buy-expansion as a
+;; payload-free action.
+(define (buy-expansion) (action-spec 'bank-buy-expansion '()))
 
 (define (withdraw #:code [code #f] #:qty [qty #f] . rest)
   (define-values (c q)

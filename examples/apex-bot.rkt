@@ -1,6 +1,6 @@
 #lang artifacts
 
-;; Competitive multi-character bot.
+;; Competitive multi-character bot built from the high-level helpers.
 ;; Tags are local descriptors; #:as sets the live Artifacts name.
 ;; Optional env overrides: ARTIFACTS_AS_FIGHTER, ARTIFACTS_AS_MINER, etc.
 ;; Set ARTIFACTS_API_TOKEN (or ARTIFACTS_TOKEN), then:
@@ -16,22 +16,13 @@
 
 (bot apex
   (character fighter #:role 'combat #:as (env-as-name 'fighter)
-    (pipeline 'strongest-safe-farm
-      (fight)
-      (rest)
-      (deposit-all)))
+    (combat-loop #:max-hp-ratio 0.5))
   (character miner #:role 'mining #:as (env-as-name 'miner)
-    (pipeline 'ore-pipeline
-      (gather)
-      (deposit-all)))
+    (mine-until-full #:resource 'copper_rocks))
   (character woodcutter #:role 'woodcutting #:as (env-as-name 'woodcutter)
-    (pipeline 'wood-pipeline
-      (gather)
-      (deposit-all)))
+    (mine-until-full #:resource 'apple_tree))
   (character fisher #:role 'fishing #:as (env-as-name 'fisher)
-    (pipeline 'fish-pipeline
-      (gather)
-      (deposit-all)))
+    (mine-until-full #:resource 'shrimp_spot))
   (character trader #:role 'trader #:as (env-as-name 'trader)
     (pipeline 'market-edge
       (scan-ge)
