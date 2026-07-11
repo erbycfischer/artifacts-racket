@@ -1428,6 +1428,32 @@
     (check-equal? (api-error-status error) 452)
     (check-equal? (api-error-code error) 452))
 
+  (test-case "account-management forms forward to their wrappers and require a token"
+    ;; These are /my-account writes/reads; a token-less config must raise the
+    ;; structured 452 only after the form delegates to its http.rkt wrapper
+    ;; with #:auth?, proving the wiring without touching the network.
+    (define forms-under-test
+      (list (cons 'my-subscription (lambda () (my-subscription #:config missing-token-config)))
+            (cons 'cancel-subscription (lambda () (cancel-subscription #:config missing-token-config)))
+            (cons 'buy-gems (lambda () (buy-gems "gold_100" #:config missing-token-config)))
+            (cons 'change-password (lambda () (change-password "new" "old" #:config missing-token-config)))
+            (cons 'change-email (lambda () (change-email "me@x.io" "old" #:config missing-token-config)))
+            (cons 'subscribe-stripe (lambda () (subscribe-stripe "gold" #:config missing-token-config)))
+            (cons 'subscribe-member-token (lambda () (subscribe-member-token #:config missing-token-config)))))
+    (for ([pair forms-under-test])
+      (define error (capture-api-error (cdr pair)))
+      (check-true (api-error? error)
+                  (format "~a should raise an api-error" (car pair)))
+      (check-equal? (api-error-status error) 452)
+      (check-equal? (api-error-code error) 452))))
+
+  (test-case "subscription get wrapper is auth-gated like other account reads"
+    ;; get-my-subscription is a GET but still /my-scoped, so it shares the 452
+    ;; behavior of the other account reads (bank, balance, etc.).
+    (define error (capture-api-error (lambda () (get-my-subscription #:config missing-token-config))))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452))
+
   (test-case "ge-order forwards to get-grand-exchange-order"
     ;; Public endpoint (no token required), so a token-less config would reach
     ;; the network rather than raising 452. Drive it at an unreachable host and
@@ -1495,5 +1521,12 @@
                    active-task
                    task-history
                    auctions
-                   my-auctions)])
+                   my-auctions
+                   my-subscription
+                   cancel-subscription
+                   buy-gems
+                   change-password
+                   change-email
+                   subscribe-stripe
+                   subscribe-member-token)])
       (check-pred procedure? q))))

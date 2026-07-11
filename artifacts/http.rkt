@@ -45,12 +45,12 @@
          get-account-logs
          get-character-logs
          get-my-subscription
-         cancel-subscription
-         buy-gems
-         change-password
-         change-email
-         subscribe-stripe
-         subscribe-member-token
+         do-cancel-subscription
+         do-buy-gems
+         do-change-password
+         do-change-email
+         do-subscribe-stripe
+         do-subscribe-member-token
          get-maps
          get-map
          get-map-by-id
@@ -388,12 +388,12 @@
   (api-get "/my/subscription" #:config config #:auth? #t))
 
 ;; Cancel an active subscription at period end. No payload.
-(define (cancel-subscription #:config [config (current-config)])
+(define (do-cancel-subscription #:config [config (current-config)])
   (api-post "/my/subscribe/cancel" #:config config #:auth? #t))
 
 ;; Purchase gems; returns a Stripe checkout URL. gem-pack is the pack code
 ;; (e.g. "gold_100").
-(define (buy-gems gem-pack #:config [config (current-config)])
+(define (do-buy-gems gem-pack #:config [config (current-config)])
   (api-post "/my/buy_gems"
             #:body (hasheq 'gem_pack (->query-value gem-pack))
             #:config config
@@ -401,7 +401,7 @@
 
 ;; Change the account password. Resetting the token is the caller's concern
 ;; (the live token becomes invalid), so we just forward the new credentials.
-(define (change-password new-password current-password #:config [config (current-config)])
+(define (do-change-password new-password current-password #:config [config (current-config)])
   (api-post "/my/change_password"
             #:body (hasheq 'new_password new-password
                            'current_password current-password)
@@ -409,7 +409,7 @@
             #:auth? #t))
 
 ;; Change the account email.
-(define (change-email new-email current-password #:config [config (current-config)])
+(define (do-change-email new-email current-password #:config [config (current-config)])
   (api-post "/my/change_email"
             #:body (hasheq 'new_email new-email
                            'current_password current-password)
@@ -417,14 +417,14 @@
             #:auth? #t))
 
 ;; Subscribe via Stripe checkout. plan is the plan code (e.g. "gold").
-(define (subscribe-stripe plan #:config [config (current-config)])
+(define (do-subscribe-stripe plan #:config [config (current-config)])
   (api-post "/my/subscribe/stripe"
             #:body (hasheq 'plan (->query-value plan))
             #:config config
             #:auth? #t))
 
 ;; Redeem a member token to start or extend membership by 30 days.
-(define (subscribe-member-token #:config [config (current-config)])
+(define (do-subscribe-member-token #:config [config (current-config)])
   (api-post "/my/subscribe/member_token" #:config config #:auth? #t))
 
 (define (get-maps #:layer [layer #f] #:page [page 1] #:size [size 100] #:config [config (current-config)])

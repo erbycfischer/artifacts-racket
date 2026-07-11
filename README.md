@@ -53,15 +53,7 @@ A bot is a roster of `character` forms (each with a `role` that steers the plann
 #lang artifacts
 
 (bot starter
-  (character smith #:role 'crafter #:as "OreBot42"
-    (craft-loop #:code 'copper_bar #:qty 1)
-    (rest-when-low #:max-hp-ratio 0.5))
-  (character fighter #:role 'combat
-    (combat-loop #:max-hp-ratio 0.5))
-  (strategy market-watch
-    (scan-ge)
-    (check-events)))
-```
+  (character smith #:role 'crafter #:as  
 
 - `bot name ...` — top-level container; `name` is what you hand to `play`.
 - `character tag #:role role [#:as name] ...` — one character. `tag` is a local label; `#:as name` pins it to a live Artifacts character (without `#:as`, the tag *is* the name).

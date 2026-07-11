@@ -42,6 +42,13 @@
         badges
         stats
         raids
+         my-subscription
+         cancel-subscription
+         buy-gems
+         change-password
+         change-email
+         subscribe-stripe
+         subscribe-member-token
          ge-order
         character-leaderboard
         account-leaderboard
@@ -156,6 +163,30 @@
 ;; Raid definitions, paginated.
 (define (raids #:page [page 1] #:size [size 100] #:config [config (current-config)])
   (get-raids #:page page #:size size #:config config))
+
+;; Account subscription management. All are auth-gated /my reads or writes, so
+;; each forwards to its http.rkt wrapper with #:auth? set; a token-less config
+;; raises the structured 452 before any network call (see tests).
+(define (my-subscription #:config [config (current-config)])
+  (get-my-subscription #:config config))
+
+(define (cancel-subscription #:config [config (current-config)])
+  (do-cancel-subscription #:config config))
+
+(define (buy-gems gem-pack #:config [config (current-config)])
+  (do-buy-gems gem-pack #:config config))
+
+(define (change-password new-password current-password #:config [config (current-config)])
+  (do-change-password new-password current-password #:config config))
+
+(define (change-email new-email current-password #:config [config (current-config)])
+  (do-change-email new-email current-password #:config config))
+
+(define (subscribe-stripe plan #:config [config (current-config)])
+  (do-subscribe-stripe plan #:config config))
+
+(define (subscribe-member-token #:config [config (current-config)])
+  (do-subscribe-member-token #:config config))
 
 ;; A single public Grand Exchange order by id, for re-checking one listing.
 (define (ge-order id #:config [config (current-config)])
