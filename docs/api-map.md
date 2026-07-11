@@ -83,7 +83,7 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Rate limits | `get-rate-limits` |
 | Account logs | `get-account-logs` |
 | Character logs | `get-character-logs` |
-| Maps (list / by coord / by id) | `get-maps`, `get-map`, `get-map-by-id` |
+| Maps (list / by coord / by id / content) | `get-maps`, `get-map`, `get-map-by-id`, `get-map-content` |
 | Items (list / one) | `get-items`, `get-item` |
 | Monsters (list / one) | `get-monsters`, `get-monster` |
 | Resources (list / one) | `get-resources`, `get-resource` |

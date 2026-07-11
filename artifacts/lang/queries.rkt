@@ -48,8 +48,9 @@
         leaderboard
         rankings
         server-details
-         maps
-         map)
+        maps
+        map
+        map-content-at)
 
 ;; A single character by name. Public endpoint, no token needed.
 (define (character name #:config [config (current-config)])
@@ -187,3 +188,8 @@
 ;; A single tile, addressed by its three coordinates (layer x y).
 (define (map layer x y #:config [config (current-config)])
   (get-map layer x y #:config config))
+
+;; Tiles at a coordinate that carry a given content code (the bank, a specific
+;; resource node, etc.). Public read; forwards straight to get-map-content.
+(define (map-content-at x y content-code #:config [config (current-config)])
+  (get-map-content x y content-code #:config config))

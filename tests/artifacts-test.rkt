@@ -1436,6 +1436,12 @@
     (check-exn exn:fail?
                (lambda () (ge-order 42 #:config dry-run-config))))
 
+  (test-case "map-content-at forwards to get-map-content"
+    ;; Public endpoint; confirm it delegates to the HTTP layer by driving it at
+    ;; an unreachable host: a connection failure means get-map-content was called.
+    (check-exn exn:fail?
+               (lambda () (map-content-at 1 2 "bank" #:config dry-run-config))))
+
   (test-case "character-leaderboard forwards to get-character-leaderboard"
     ;; Public endpoint (no token required); same reach-the-HTTP-layer proof as
     ;; the public forms above. The #:sort passes straight through to the wrapper.
@@ -1485,6 +1491,7 @@
                    server-details
                    maps
                    q:map
+                   map-content-at
                    active-task
                    task-history
                    auctions

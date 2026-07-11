@@ -47,6 +47,7 @@
          get-maps
          get-map
          get-map-by-id
+         get-map-content
          get-items
          get-item
          get-monsters
@@ -379,6 +380,11 @@
 
 (define (get-map-by-id map-id #:config [config (current-config)])
   (api-get (format "/maps/id/~a" map-id) #:config config))
+
+;; Tiles at a coordinate that carry a given content code, e.g. the bank or a
+;; specific resource node. Public read (no token needed).
+(define (get-map-content x y content-code #:config [config (current-config)])
+  (api-get (format "/maps/~a/~a/~a" x y content-code) #:config config))
 
 (define (get-items #:page [page 1] #:size [size 100] #:config [config (current-config)])
   (paged-get "/items" #:page page #:size size #:config config))

@@ -8,7 +8,7 @@ This file tracks the Racket wrapper surface for the Artifacts MMO API. The goal 
 - Authentication guard: authenticated wrappers require a bearer token and raise a client-side `452` API error when the token is missing.
 - Account and character reads: account details, characters, bank, pending items, purchase history, gems history, active/history tasks, auctions, character events, balance, badges, stats, rate limits, and logs.
 - Account character writes: create and delete characters (`POST /characters/create`, `POST /characters/delete`).
-- Public encyclopedia reads: maps, map lookup, items, monsters, resources, NPC details/items, tasks, achievements, and effects.
+- Public encyclopedia reads: maps, map lookup, content-at-coordinate lookup, items, monsters, resources, NPC details/items, tasks, achievements, and effects.
 - Grand Exchange reads and account order/history reads, including a single public order by id (`get-grand-exchange-order` / `ge-order`).
 - Events, active events, raids, raid details, and leaderboards (character, account, generic column, and rankings).
 - Fight simulation wrapper.
