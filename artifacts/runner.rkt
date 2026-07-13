@@ -156,7 +156,7 @@
          char)))
 
 (define (config-has-token? config)
-  (define token (artifacts-config-token config))
+  (define token (config-token config))
   (and token (non-empty-string? token)))
 
 (define (synthetic-character spec index)
@@ -268,7 +268,15 @@
         (define action-name (action-spec-name spec))
         (printf "  ~a\n" action-name)
         (flush-output)
-        (unless dry-run?
+        ;; In dry-run we must not touch the live API: scan-ge, active-events,
+        ;; raids, and the ruthless-market `market-tick` are all network-backed
+        ;; strategy actions that block (no token, no network). Skip only those
+        ;; when dry-running; every other action still dispatches so a dry-run
+        ;; mirrors a real tick as closely as possible without hanging.
+        (define network-action?
+          (member action-name
+                  '(grand-exchange-orders active-events raids market-tick)))
+        (when (or (not dry-run?) (not network-action?))
           (dispatch-action-name live-name
                                 action-name
                                 (action-spec-payload-value spec)

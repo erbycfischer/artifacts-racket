@@ -6,6 +6,7 @@
          "../http.rkt"
          "../planner.rkt"
          "../runner.rkt"
+         "../auth.rkt"
          "./actions.rkt"
          "./helpers.rkt"
          (for-syntax syntax/parse))
@@ -26,10 +27,12 @@
          known-action?
          execute-action
          execute-goal
-         create-character
-         ensure-characters
-         play
-         (all-from-out "./actions.rkt")
+        create-character
+        ensure-characters
+        play
+        play-with-visualizer
+        auto-login
+        (all-from-out "./actions.rkt")
          (all-from-out "./helpers.rkt")
          (all-from-out "../dsl-forms.rkt")
          (all-from-out "../core.rkt")
@@ -180,6 +183,15 @@
     [(_ type body ...)
      #'(guard-spec (lambda (char) (when-on-content char type)) (list body ...))]))
 
+;; Run `body` only while the character is below `target` level. Pairs with
+;; auto-level so a bot grinds toward a goal level and then stops pushing that
+;; goal once reached. Like the other when-* forms it is thin syntax over
+;; guard-spec, so it resolves against the live character every tick.
+(define-syntax (when-below-level stx)
+  (syntax-parse stx
+    [(_ target body ...)
+     #'(guard-spec (lambda (char) (when-below-level char target)) (list body ...))]))
+
 (define (pipeline name . actions)
   (unless (symbol? name)
     (error 'pipeline "expected symbolic pipeline name, got ~v" name))
@@ -264,11 +276,68 @@
               #:ensure-characters? [ensure-characters? #f]
               #:skin [skin "men1"]
               #:skins [skins #hasheq()])
+  ;; Auto-login: when there is no token in the resolved config and we are not in
+  ;; dry-run, attempt the visualizer bridge once (bounded). If it yields a token,
+  ;; install it into current-config so the loop uses it. On any failure we print
+  ;; a one-line hint and proceed — a live bot with no token will then surface a
+  ;; clear 452 at request time, which is acceptable. Never loops forever: the
+  ;; bridge wait is bounded by login-via-visualizer itself.
+  (unless dry-run?
+    (when (not (present-token? (config-token config)))
+      (with-handlers ([exn:fail?
+                       (lambda (exn)
+                         (printf "No token: start the visualizer and log in, run tools/gen-token.rkt login, or set ARTIFACTS_API_TOKEN\n")
+                         (flush-output))])
+        (login-via-visualizer #:wait? #f))))
   (run-bot-loop bot
-                #:config config
+                #:config (current-config)
                 #:iterations iterations
                 #:sleep-seconds sleep-seconds
                 #:dry-run? dry-run?
                 #:ensure-characters? ensure-characters?
                 #:skin skin
                 #:skins skins))
+
+;; The single "play your bot using the 3D client" entry point. It blocks
+;; briefly until the user logs into the visualizer (installing the resulting
+;; token into current-config), runs the bot loop with the same pass-through
+;; options as play, then prints a clear instruction to open the visualizer to
+;; watch the character live. The visualizer polls the official API, so the bot
+;; never imports it.
+(define (play-with-visualizer bot
+                                 #:config [config (current-config)]
+                                 #:iterations [iterations +inf.0]
+                                 #:sleep-seconds [sleep-seconds 2]
+                                 #:dry-run? [dry-run? #f]
+                                 #:ensure-characters? [ensure-characters? #f]
+                                 #:skin [skin "men1"]
+                                 #:skins [skins #hasheq()])
+  (unless dry-run?
+    (with-handlers ([exn:fail?
+                     (lambda (exn)
+                       (printf "No token: start the visualizer and log in, run tools/gen-token.rkt login, or set ARTIFACTS_API_TOKEN\n")
+                       (flush-output))])
+      (login-via-visualizer #:wait? #t)))
+  (printf "Watching in 3D: open the artifacts-mmo-ai-3d-visualizer and log in with the same account — it polls your character live. Press Ctrl-C to stop.\n")
+  (flush-output)
+  (run-bot-loop bot
+                #:config (current-config)
+                #:iterations iterations
+                #:sleep-seconds sleep-seconds
+                #:dry-run? dry-run?
+                #:ensure-characters? ensure-characters?
+                #:skin skin
+                #:skins skins))
+
+;; A declarative opt-in form: place (auto-login) at module top-level to log in
+;; via the visualizer bridge at startup and install the token into
+;; current-config. It is bounded (single attempt) and never loops; if the bridge
+;; is down it prints a one-line hint and continues. Most bots don't need this —
+;; `play` auto-logs-in for them — but it is available for explicit requests.
+(define-syntax-rule (auto-login)
+  (unless (present-token? (config-token (current-config)))
+    (with-handlers ([exn:fail?
+                     (lambda (exn)
+                       (printf "No token: start the visualizer and log in, run tools/gen-token.rkt login, or set ARTIFACTS_API_TOKEN\n")
+                       (flush-output))])
+      (login-via-visualizer #:wait? #f))))

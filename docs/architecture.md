@@ -18,6 +18,7 @@ Bots never import the visualizer. Watching bots in 3D is done by the visual clie
 ## Bot stack (`artifacts/`)
 
 - HTTP wrappers and auth (`http.rkt`, `config.rkt`)
+- Auth orchestration: `login-via-visualizer`, `refresh-token`, bridge/file/env token sources (`auth.rkt`)
 - World index + encyclopedia cache (`world.rkt`, `world-cache.rkt`)
 - Planner / runner / scheduler
 - `#lang artifacts` reader + runtime

@@ -3,7 +3,9 @@
 (require json
          net/uri-codec
          net/url
+         net/base64
          racket/string
+         racket/bytes
          "config.rkt")
 
 (provide (struct-out api-error)
@@ -44,6 +46,29 @@
          get-rate-limits
          get-account-logs
          get-character-logs
+         get-account-by-name
+         get-account-achievements
+         get-account-characters
+         get-active-characters
+         get-account-details-by-name
+         get-badges
+         get-badge
+         get-skins
+         get-skin
+         get-season-rewards
+         get-season-reward
+         get-task-rewards
+         get-task-reward
+         get-gems-shop
+         post-gems-shop-buy-custom-design
+         post-gems-shop-skin
+         post-gems-shop-spawn-event
+         post-gems-shop-subscription
+         post-accounts-create
+         post-forgot-password
+         post-reset-password
+         post-token
+         post-game-assistant-ask
          get-my-subscription
          do-cancel-subscription
          do-buy-gems
@@ -169,20 +194,22 @@
 ;; Raises a structured 452 api-error when the config carries no usable token.
 ;; Exported so callers (like the realtime polling layer) can refuse to fire a
 ;; public, non-auth-gated endpoint with no credentials instead of letting the
-;; request silently fail mid-network.
+;; request silently fail mid-network. The token is resolved through the
+;; config's token source, so an env/file/bridge source that fails to yield a
+;; token is treated exactly like a missing token.
 (define (ensure-authenticated! config)
-  (unless (present-token? (artifacts-config-token config))
+  (unless (present-token? (config-token config))
     (raise-api-error (missing-auth-error))))
 
 (define (request-headers config #:auth? [auth? #f])
   (when auth?
     (ensure-authenticated! config))
+  (define token (config-token config))
   (filter values
           (list "Accept: application/json"
                 "Content-Type: application/json"
-                (and (present-token? (artifacts-config-token config))
-                     (string-append "Authorization: Bearer "
-                                    (artifacts-config-token config))))))
+                (and (present-token? token)
+                     (string-append "Authorization: Bearer " token)))))
 
 (define (hash-ref/default value key default)
   (if (hash? value) (hash-ref value key default) default))
@@ -378,6 +405,115 @@
 
 (define (get-character-logs name #:page [page 1] #:size [size 50] #:config [config (current-config)])
   (paged-get (format "/my/logs/~a" name) #:page page #:size size #:config config #:auth? #t))
+
+;; ---- Public encyclopedia / companion reads not yet covered ----
+;; These mirror the official OpenAPI surface (audit against openapi.json). All
+;; are public reads except where noted, so none force #:auth?.
+
+;; A single account's public profile by account name. Public read.
+(define (get-account-by-name account #:config [config (current-config)])
+  (api-get (format "/accounts/~a" account) #:config config))
+
+;; A single account's earned achievements. Public read.
+(define (get-account-achievements account #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get (format "/accounts/~a/achievements" account) #:page page #:size size #:config config))
+
+;; A single account's characters. Public read.
+(define (get-account-characters account #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get (format "/accounts/~a/characters" account) #:page page #:size size #:config config))
+
+;; Accounts currently online (the public "who's playing" list). Public read.
+(define (get-active-characters #:page [page 1] #:size [size 50] #:config [config (current-config)])
+  (paged-get "/characters/active" #:page page #:size size #:config config))
+
+;; The authenticated account's own public-style profile. Convenience over the
+;; named variant, auth-gated because it is a /my read like /my/details.
+(define (get-account-details-by-name #:config [config (current-config)])
+  (api-get "/my/details" #:config config #:auth? #t))
+
+;; Badge definitions (public catalog), and one by code.
+(define (get-badges #:page [page 1] #:size [size 100] #:config [config (current-config)])
+  (paged-get "/badges" #:page page #:size size #:config config))
+
+(define (get-badge code #:config [config (current-config)])
+  (api-get (format "/badges/~a" code) #:config config))
+
+;; Character skin catalog, and one by code (the appearance picker data).
+(define (get-skins #:page [page 1] #:size [size 100] #:config [config (current-config)])
+  (paged-get "/skins" #:page page #:size size #:config config))
+
+(define (get-skin code #:config [config (current-config)])
+  (api-get (format "/skins/~a" code) #:config config))
+
+;; Season reward tiers, and one by code. Public reads.
+(define (get-season-rewards #:page [page 1] #:size [size 100] #:config [config (current-config)])
+  (paged-get "/season_rewards" #:page page #:size size #:config config))
+
+(define (get-season-reward code #:config [config (current-config)])
+  (api-get (format "/season_rewards/~a" code) #:config config))
+
+;; Task reward tables (the reward catalog for each task), and one by code.
+(define (get-task-rewards #:page [page 1] #:size [size 100] #:config [config (current-config)])
+  (paged-get "/tasks/rewards" #:page page #:size size #:config config))
+
+(define (get-task-reward code #:config [config (current-config)])
+  (api-get (format "/tasks/rewards/~a" code) #:config config))
+
+;; The gems-shop catalog (cosmetic/utility gem items). Public read.
+(define (get-gems-shop #:config [config (current-config)])
+  (api-get "/gems_shop/" #:config config))
+
+;; Gems-shop purchases are auth-gated writes; the visualizer/account path is the
+;; caller's concern, we just forward the payload to /my/buy_gems or these shop
+;; endpoints. Each forces auth so a token-less config raises the structured 452
+;; before any network call.
+(define (post-gems-shop-buy-custom-design #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/gems_shop/buy_custom_design" #:body body #:config config #:auth? #t))
+
+(define (post-gems-shop-skin #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/gems_shop/skin" #:body body #:config config #:auth? #t))
+
+(define (post-gems-shop-spawn-event #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/gems_shop/spawn_event" #:body body #:config config #:auth? #t))
+
+(define (post-gems-shop-subscription #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/gems_shop/subscription" #:body body #:config config #:auth? #t))
+
+;; Account registration (public; no token needed). `body` is the account
+;; payload (username + email + password). The new token comes back in the
+;; response, so a bot can install it via login-with-token-style flows.
+(define (post-accounts-create #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/accounts/create" #:body body #:config config))
+
+;; Password recovery triggers (public; no token). body carries the email.
+(define (post-forgot-password #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/accounts/forgot_password" #:body body #:config config))
+
+;; Password reset (public; no token). body carries the new password + token.
+(define (post-reset-password #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/accounts/reset_password" #:body body #:config config))
+
+;; Exchange basic credentials for a bearer token. Auth uses HTTP Basic here (not
+;; the bearer we normally send), so `username`/`password` ride in the Basic
+;; header. We build the Basic Authorization header manually rather than through
+;; request-headers, which only knows bearer auth.
+(define (post-token username password #:config [config (current-config)])
+  (define basic (string-append "Authorization: Basic "
+                               (bytes->string/utf-8
+                                (base64-encode (string->bytes/utf-8
+                                                (format "~a:~a" username password))
+                                               #""))))
+  (call/input-url (request-url config "/token" '())
+                  (lambda (target-url)
+                    (post-pure-port target-url #"" (list "Accept: application/json"
+                                                         "Content-Type: application/json"
+                                                         basic)))
+                  read-response))
+
+;; Ask the game-assistant LLM a question. Auth-gated (the API requires a bearer
+;; token), so a token-less config raises the structured 452 before any network.
+(define (post-game-assistant-ask #:body [body #hasheq()] #:config [config (current-config)])
+  (api-post "/game_assistant/ask" #:body body #:config config #:auth? #t))
 
 ;; Account subscription reads and management. These are /my-account endpoints,
 ;; so every one forces auth — a token-less config raises the structured 452

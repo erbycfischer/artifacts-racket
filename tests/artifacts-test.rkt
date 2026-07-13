@@ -1,4 +1,4 @@
-#lang racket
+﻿#lang racket
 
 (require rackunit
          json
@@ -6,8 +6,9 @@
          racket/file
          net/url
          "../artifacts/config.rkt"
+         "../artifacts/auth.rkt"
          "../artifacts/http.rkt"
-         (except-in "../artifacts/lang/runtime.rkt" when-low-hp when-inventory-full when-on-content)
+         (except-in "../artifacts/lang/runtime.rkt" when-low-hp when-inventory-full when-on-content when-below-level)
         "../artifacts/lang/helpers.rkt"
         "../artifacts/lang/realtime.rkt"
         "../artifacts/dsl-forms.rkt"
@@ -379,12 +380,18 @@
                                  #:preferred (list (craft 'copper_bar 1))))
     (check-equal? (planned-action-name plan) 'craft))
 
-  (test-case "create-character requires auth"
+  (test-case "create-character is auth-gated (POST /characters/create)"
+    ;; Character creation is API-driven, not a manual website step, but it is a
+    ;; /characters write that requires a bearer token. A token-less config must
+    ;; raise the structured 452 before any request leaves the process, proving
+    ;; the endpoint is both reachable through the wrapper and auth-gated.
     (define error
       (capture-api-error
        (lambda ()
          (create-character "fighter" #:config missing-token-config))))
-    (check-equal? (api-error-status error) 452))
+    (check-true (api-error? error))
+    (check-equal? (api-error-status error) 452)
+    (check-equal? (api-error-code error) 452))
 
   (test-case "route-for-plan builds move paths"
     (define world
@@ -1445,7 +1452,7 @@
       (check-true (api-error? error)
                   (format "~a should raise an api-error" (car pair)))
       (check-equal? (api-error-status error) 452)
-      (check-equal? (api-error-code error) 452))))
+      (check-equal? (api-error-code error) 452)))
 
   (test-case "subscription get wrapper is auth-gated like other account reads"
     ;; get-my-subscription is a GET but still /my-scoped, so it shares the 452
@@ -1530,3 +1537,56 @@
                    subscribe-stripe
                    subscribe-member-token)])
       (check-pred procedure? q))))
+
+;; ---- Local token generator: file save/read round-trip (no network) ----
+;; Exercises the save-token!/read-token! helpers gen-token.rkt uses, plus
+;; make-file-source resolution against a temp token file. No credentials, no
+;; network: we write a fake token and assert the framework reads it back.
+(module+ test
+  (define generator-token-file (make-temporary-file "artifacts-gen-~a"))
+
+  (test-case "save-token! writes a single trimmed line"
+    (define written (save-token! "  EYEjwt.example.token.payload  " #:path generator-token-file))
+    (check-equal? written "EYEjwt.example.token.payload")
+    (define contents
+      (with-input-from-file generator-token-file (lambda () (port->string)) #:mode 'text))
+    (check-equal? contents "EYEjwt.example.token.payload")
+    (check-false (regexp-match? #px"\n" contents)))
+
+  (test-case "read-token! resolves the saved file source"
+    (check-equal? (read-token! #:path generator-token-file)
+                  "EYEjwt.example.token.payload"))
+
+  (test-case "save-token! creates a missing parent directory"
+    (define nested (build-path (make-temporary-file "artifacts-gen-dir-~a" 'directory)
+                               "nested" "token"))
+    (save-token! "NESTED_TOKEN" #:path nested)
+    (check-true (file-exists? nested))
+    (check-equal? (read-token! #:path nested) "NESTED_TOKEN")
+    (delete-directory/files (path-only nested)))
+
+  (test-case "save-token! refuses an empty token"
+    (check-exn #px"refusing to write an empty token"
+               (lambda () (save-token! "" #:path generator-token-file)))
+    (check-exn #px"refusing to write an empty token"
+               (lambda () (save-token! "   " #:path generator-token-file))))
+
+  (test-case "read-token! returns #f for a missing file"
+    (define missing (make-temporary-file "artifacts-gen-missing-~a"))
+    (delete-file missing)
+    (check-false (read-token! #:path missing)))
+
+  (test-case "token-source resolves a generator-format file"
+    (define cfg
+      (artifacts-config "https://api.artifactsmmo.com"
+                        "wss://realtime.artifactsmmo.com"
+                        (make-file-source #:path generator-token-file)))
+    (check-equal? (config-token cfg) "EYEjwt.example.token.payload")
+    (define missing (make-temporary-file "artifacts-gen-missing2-~a"))
+    (delete-file missing)
+    (define absent-cfg
+      (artifacts-config "https://api.artifactsmmo.com"
+                        "wss://realtime.artifactsmmo.com"
+                        (make-file-source #:path missing)))
+    (check-false (config-token absent-cfg))))
+

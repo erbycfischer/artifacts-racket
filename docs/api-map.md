@@ -99,6 +99,18 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Character / account leaderboards | `get-character-leaderboard`, `get-account-leaderboard` |
 | Column leaderboard / rankings | `get-leaderboard`, `get-rankings` |
 | Fight simulation | `simulate-fight` (used by `matchup-score`) |
+| Account by name | `get-account-by-name` |
+| Account achievements / characters | `get-account-achievements`, `get-account-characters` |
+| Active (online) characters | `get-active-characters` |
+| Badge catalog / one | `get-badges`, `get-badge` |
+| Skin catalog / one | `get-skins`, `get-skin` |
+| Season rewards / one | `get-season-rewards`, `get-season-reward` |
+| Task rewards / one | `get-task-rewards`, `get-task-reward` |
+| Gems-shop catalog | `get-gems-shop` |
+| Gems-shop purchases | `post-gems-shop-buy-custom-design`, `post-gems-shop-skin`, `post-gems-shop-spawn-event`, `post-gems-shop-subscription` |
+| Account register / password recovery | `post-accounts-create`, `post-forgot-password`, `post-reset-password` |
+| Basic-auth token exchange | `post-token` |
+| Game-assistant ask | `post-game-assistant-ask` |
 
 ## Fight matchup scoring (helpers, not direct API builders)
 
@@ -111,6 +123,28 @@ These are exposed as `http.rkt` readers for scripting/strategy logic. They have 
 | Damage / XP math | `elemental-damage`, `final-damage`, `critical-damage`, `expected-critical-damage`, `fight-cooldown-seconds`, `combat-xp` |
 
 The planner uses `best-safe-monster` (`artifacts/planner.rkt`) on top of `matchup-score` to pick the safest reachable target per tick.
+
+## Authentication methods
+
+The framework resolves a bearer token through a `token-source` abstraction (`artifacts/config.rkt`) so a bot can authenticate however the operator prefers. Every source resolves to the same `Authorization: Bearer <token>` header; all are pure and optional, and a token-less config still raises the structured `452` at request time.
+
+| Method | How to configure | Source kind |
+|--------|------------------|-------------|
+| Explicit string | `(make-config #:token "TOKEN")` or `with-token-source "TOKEN"` | `explicit` |
+| Environment | `ARTIFACTS_API_TOKEN` (preferred) / `ARTIFACTS_TOKEN`; default of `make-config` | `env` |
+| Token file | `~/.artifacts/token` or `ARTIFACTS_TOKEN_FILE`; `(make-config #:token (make-file-source))` | `file` |
+| 3D Visualizer bridge | running bridge at `http://127.0.0.1:7878/token` (or `~/.artifacts/visualizer-token`); `(login-via-visualizer)` or `(make-bridge-config)` | `bridge` |
+
+The bridge source cascades: bridge (HTTP → file) → file → env, so a bot keeps working if one source is unavailable. `refresh-token` re-resolves the source after a `452`/expiry signal and updates `current-config` if a fresh token appears (defensive: re-resolves only, never loops).
+
+## Ergonomic read helpers (`artifacts/lang/queries.rkt`)
+
+| Helper | What it does |
+|--------|--------------|
+| `all-pages` | Collect every page of a paged reader (e.g. `items`, `my-characters`) into one list; stops at the last page, never loops forever. |
+| `with-account` | Run a thunk with a temporary `current-config`, restoring the ambient config afterward. |
+
+The `#lang` query forms for the new reads mirror the existing ones (e.g. `account-by-name`, `active-characters`, `badge-catalog`, `badge`, `skin-catalog`, `season-rewards`, `task-rewards`, `gems-shop`, `game-assistant-ask`, `register-account`).
 
 ## Coverage notes
 

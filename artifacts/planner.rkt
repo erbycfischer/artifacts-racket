@@ -30,6 +30,7 @@
          when-low-hp
          when-inventory-full
          when-on-content
+         when-below-level
          safe-win-threshold)
 
 (struct planned-action (name payload reason priority) #:transparent)
@@ -155,6 +156,13 @@
 ;; True when the character stands on a tile whose content matches type/code.
 (define (when-on-content char type [code #f])
   (on-content? char type code))
+
+;; True when the character's overall level is below `target`. `auto-level`
+;; gates bank runs and role work behind this so a bot keeps grinding until it
+;; reaches the goal level; a character with no level reads as "below target"
+;; (level defaults to 1) so the goal never silently stops.
+(define (when-below-level char target)
+  (< (character-field char 'level 1) target))
 
 (define (character-map char)
   (hasheq 'map_id (character-field char 'map_id)
@@ -472,6 +480,11 @@
     [(transition) (or (plan-transition char world)
                       (let ([node (nearest-typed-content world char "transition")])
                         (and node (move-to node "Travel to transition." #:priority 57))))]
+    ;; equip / unequip need no tile; the goal's guard already vetted the slot
+    ;; and item, so we forward the action payload straight to dispatch.
+    [(equip unequip)
+     (planned-action name (action-spec-payload spec)
+                     (format "Manage ~a." name) 60)]
     [(raids) #f]
     [else #f]))
 
