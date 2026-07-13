@@ -423,6 +423,7 @@
                       #:iterations [iterations +inf.0]
                       #:sleep-seconds [sleep-seconds 2]
                       #:dry-run? [dry-run? #f]
+                      #:pretend? [pretend? #f]
                       #:ensure-characters? [ensure-characters? #f]
                       #:skin [default-skin "men1"]
                       #:skins [skins #hasheq()])
@@ -432,12 +433,19 @@
                            #:skin default-skin
                            #:skins skins
                            #:dry-run? dry-run?))
+  (when pretend?
+    (artifacts-pretend? #t)
+    (printf "PRETEND mode: real login + real movement, but orders are simulated (no gold moves).\n")
+    (flush-output))
   (printf "Loading world and encyclopedia...\n")
   (flush-output)
-  (define world (load-world-index #:config config))
-  (define encyclopedia (load-encyclopedia #:config config))
+  (define-values (world encyclopedia)
+    (if dry-run?
+        (values #f (hasheq 'monsters '() 'resources '() 'items '()))
+        (values (load-world-index #:config config)
+                (load-encyclopedia #:config config))))
   (printf "World maps: ~a | monsters: ~a | resources: ~a\n"
-          (length (world-index-maps world))
+          (if (world-index? world) (length (world-index-maps world)) 0)
           (length (hash-ref encyclopedia 'monsters '()))
           (length (hash-ref encyclopedia 'resources '())))
   (flush-output)

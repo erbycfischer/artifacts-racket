@@ -46,6 +46,10 @@
   (let ([v (getenv "ARTIFACTS_DRY_RUN")])
     (and v (member v '("1" "true" "TRUE" "yes" "YES")) #t)))
 
+(define pretend?
+  (let ([v (getenv "ARTIFACTS_PRETEND")])
+    (and v (member v '("1" "true" "TRUE" "yes" "YES")) #t)))
+
 (define iterations
   (let ([v (getenv "ARTIFACTS_ITERATIONS")])
     (if v (string->number v) (if dry-run? 2 +inf.0))))
@@ -54,4 +58,5 @@
       #:ensure-characters? #t
       #:iterations iterations
       #:sleep-seconds 3
-      #:dry-run? dry-run?)
+      #:dry-run? dry-run?
+      #:pretend? pretend?)

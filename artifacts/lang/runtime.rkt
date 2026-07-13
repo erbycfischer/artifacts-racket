@@ -273,6 +273,7 @@
               #:iterations [iterations +inf.0]
               #:sleep-seconds [sleep-seconds 2]
               #:dry-run? [dry-run? #f]
+              #:pretend? [pretend? #f]
               #:ensure-characters? [ensure-characters? #f]
               #:skin [skin "men1"]
               #:skins [skins #hasheq()])
@@ -294,6 +295,7 @@
                 #:iterations iterations
                 #:sleep-seconds sleep-seconds
                 #:dry-run? dry-run?
+                #:pretend? pretend?
                 #:ensure-characters? ensure-characters?
                 #:skin skin
                 #:skins skins))
@@ -309,6 +311,7 @@
                                  #:iterations [iterations +inf.0]
                                  #:sleep-seconds [sleep-seconds 2]
                                  #:dry-run? [dry-run? #f]
+                                 #:pretend? [pretend? #f]
                                  #:ensure-characters? [ensure-characters? #f]
                                  #:skin [skin "men1"]
                                  #:skins [skins #hasheq()])
@@ -325,6 +328,7 @@
                 #:iterations iterations
                 #:sleep-seconds sleep-seconds
                 #:dry-run? dry-run?
+                #:pretend? pretend?
                 #:ensure-characters? ensure-characters?
                 #:skin skin
                 #:skins skins))

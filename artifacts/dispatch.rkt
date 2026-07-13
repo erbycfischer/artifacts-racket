@@ -6,6 +6,7 @@
 (provide dispatch-action-name)
 
 (define (dispatch-action-name character-name action-name payload #:config [config (current-config)])
+  (define pretend? (artifacts-pretend?))
   (case action-name
     [(move)
      (cond
@@ -34,10 +35,22 @@
     [(npc-buy) (action-npc-buy character-name payload #:config config)]
     [(npc-sell) (action-npc-sell character-name payload #:config config)]
     [(grand-exchange-buy) (action-grand-exchange-buy character-name payload #:config config)]
-    [(grand-exchange-create-sell-order) (action-grand-exchange-create-sell-order character-name payload #:config config)]
-    [(grand-exchange-create-buy-order) (action-grand-exchange-create-buy-order character-name payload #:config config)]
-    [(grand-exchange-cancel) (action-grand-exchange-cancel character-name payload #:config config)]
-    [(grand-exchange-fill) (action-grand-exchange-fill character-name payload #:config config)]
+    [(grand-exchange-create-sell-order)
+     (if pretend?
+         (printf "  [pretend] would CREATE SELL ORDER ~a\n" payload)
+         (action-grand-exchange-create-sell-order character-name payload #:config config))]
+    [(grand-exchange-create-buy-order)
+     (if pretend?
+         (printf "  [pretend] would CREATE BUY ORDER ~a\n" payload)
+         (action-grand-exchange-create-buy-order character-name payload #:config config))]
+    [(grand-exchange-cancel)
+     (if pretend?
+         (printf "  [pretend] would CANCEL ORDER ~a\n" payload)
+         (action-grand-exchange-cancel character-name payload #:config config))]
+    [(grand-exchange-fill)
+     (if pretend?
+         (printf "  [pretend] would FILL ORDER ~a\n" payload)
+         (action-grand-exchange-fill character-name payload #:config config))]
     [(task-new) (action-task-new character-name #:config config)]
     [(task-complete) (action-task-complete character-name #:config config)]
     [(task-cancel) (action-task-cancel character-name #:config config)]

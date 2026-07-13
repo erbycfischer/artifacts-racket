@@ -41,6 +41,7 @@
          reresolve-token
          config-token
          present-token?
+         artifacts-pretend?
          token-source?
          explicit-token-source?
          file-token-source?
@@ -255,3 +256,13 @@
 
 (define current-config
   (make-parameter (make-config)))
+
+;; Pretend mode: a real login (authenticated against the live API, real
+;; character movement, real market reads) but no actual orders are placed — the
+;; order-mutating GE actions in dispatch.rkt print what they *would* do instead
+;; of calling the network. Driven by ARTIFACTS_PRETEND=1 so it can be toggled
+;; without code changes and survives a real (non-dry) login.
+(define artifacts-pretend?
+  (make-parameter
+   (let ([v (getenv "ARTIFACTS_PRETEND")])
+     (and v (member v '("1" "true" "TRUE" "yes" "YES")) #t))))
