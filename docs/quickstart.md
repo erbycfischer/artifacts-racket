@@ -157,6 +157,29 @@ These compose builders with the reactive goal conditions from `artifacts/planner
 | `auto-level` | Grind toward `target` level using the character's role skill (gather for miners/woodcutters/fishers, fight for combat), banking when full — and stops once the target is reached. `(auto-level 'combat #:target 10 #:max-hp-ratio 0.5)` |
 | `trader-loop` | Watch the GE, list a sell order, and bank when full — a complete trade loop in one call. Add `#:fill-order-id` to also fill a specific buy order. `(trader-loop #:code 'copper_ore #:qty 5 #:price 10)` |
 | `banker` | Deposit everything when the bag is full, and buy a bank slot when the bank itself nears capacity. Pair with any gather/loop goal. `(banker #:bank-threshold 5)` |
+| `heal-when-low` | Use a potion when HP drops to `ratio` of max. `(heal-when-low)` or `(heal-when-low #:code 'medium_health_potion #:ratio 0.4)` |
+| `gather-specific` | Gather a named resource (not just the role default), banking when full. `(gather-specific #:resource 'copper_ore)` |
+| `gather-until` | Gather until the bag holds `qty` of a code, then stop. `(gather-until #:resource 'copper_ore #:qty 5)` |
+| `hunt` | Fight a named monster, rest when hurt, bank when full. `(hunt #:code 'chicken)` |
+| `farm-xp` | Combat auto-level: grind toward `target` then stop. `(farm-xp #:target 10)` |
+| `task-loop` | Complete, exchange, and accept tasks at the task master. `(task-loop)` |
+| `sell-all-on-ge` | Dump listed codes on the Grand Exchange at `price`. `(sell-all-on-ge #:codes '(copper_ore coal) #:price 10)` |
+| `stockpile` | Keep `n` of a code in the bag; bank the rest. `(stockpile #:code 'copper_ore #:keep 2)` |
+| `travel-to` | Walk to the nearest tile of a content type. `(travel-to #:type "workshop")` |
+| `auto-gear` | Equip the best weapon/armor currently in inventory. `(auto-gear)` |
+| `grind` | Fight, sell default loot, buy default gear. `(grind #:gear-table default-gear-table #:loot-codes default-loot-codes)` |
+| `consume-buff` | Use `code` as soon as it lands in the bag. `(consume-buff #:code 'fireball_scroll)` |
+| `recycle-junk` | Recycle listed codes at a workshop when held. `(recycle-junk #:codes '(ash junk))` |
+| `production-chain` | `gather-until` each ingredient, then craft. `(production-chain #:craft 'copper_bar #:qty 1)` |
+| `craft-if-materials` | Craft only once every material is in the bag. `(craft-if-materials #:code 'copper_bar #:materials '((copper_ore 1)))` |
+| `withdraw-then-sell` | Withdraw from bank, then list on the GE. `(withdraw-then-sell #:code 'copper_ore #:qty 5 #:price 10)` |
+| `bank-gold` | Deposit gold when carried gold exceeds `threshold`. `(bank-gold #:threshold 100)` |
+| `keep-gold` | Withdraw gold when carried gold falls below `floor`. `(keep-gold #:floor 50)` |
+| `restock` | Withdraw from bank until the bag holds `n` of a code. `(restock #:code 'copper_ore #:qty 5)` |
+| `snap-up` | Buy on the GE when the best ask is at or below `max-price`. `(snap-up #:code 'coal #:max-price 8)` |
+| `buy-kit` | Buy and equip a slot → item-code hash at the items tile. `(buy-kit #:slots (hash 'weapon 'wooden_sword))` |
+| `deposit-surplus` | Keep `n` of a code in the bag; deposit the rest (same as `stockpile`). `(deposit-surplus #:code 'copper_ore #:keep 2)` |
+| `haul` | Gather until full, bank, and grow bank capacity. `(haul #:resource 'copper_rocks #:reserve 1)` |
 
 ## 5. Goal conditions (reactive guards)
 
@@ -165,6 +188,12 @@ The conditions run against the live character every tick, so the goal body stays
 - `(when-low-hp ratio action ...)` — run `action` only while `hp/max_hp <= ratio`.
 - `(when-inventory-full action ...)` or `(when-inventory-full #:reserve n action ...)` — run `action` only when the bag is full (minus `n` slots).
 - `(when-on-content type action ...)` — run `action` only while standing on a tile of `type` (e.g. `"bank"`, `"npc"`, `"workshop"`, `"grand_exchange"`).
+- `(when-has-item code action ...)` — run `action` only while the bag holds `code`.
+- `(when-gold-above n action ...)` / `(when-gold-below n action ...)` — run `action` only while carried gold is above/below `n`.
+- `(when-hp-above ratio action ...)` — run `action` only while HP is above `ratio` of max.
+- `(when-inventory-empty action ...)` — run `action` only while the bag is empty (optional `#:reserve`).
+- `(when-on-map id action ...)` — run `action` only while standing on map `id`.
+- `(when-below-level target action ...)` — run `action` only while overall level is below `target`.
 
 ```racket
 (when-on-content "workshop"
@@ -324,12 +353,15 @@ racket my-first-bot.rkt
 
 The ready-to-run versions live in `examples/`:
 
+- `examples/harmony-bot.rkt` — flagship 5-character shared-bank economy (the account cap). Characters coordinate through the bank as a mailbox. Cap a live run with `ARTIFACTS_ITERATIONS=N`; rares are banked and appended to `logs/rare-drops.ndjson` (never auto-sold).
 - `examples/miner-bot.rkt` — `mine-until-full` + `banker`
 - `examples/fighter-bot.rkt` — `auto-level 'combat #:target 10`
 - `examples/trader-bot.rkt` — `trader-loop` (runs a dry-run play loop)
 
 ## Where to go next
 
+- `examples/harmony-bot.rkt` — flagship 5-char mailbox economy (fighter / miner / wood / smith / trader).
+- `examples/everything-bot.rkt` — one character per helper family; the copy-paste playbook.
 - `examples/apex-bot.rkt` — a competitive multi-character roster using every helper.
 - `examples/workshop-bot.rkt` — crafter + tasker + trader flows with `craft-loop`.
 - `tests/artifacts-test.rkt` — every form and helper is pinned by a RackUnit test; read it to see exact specs and guard behavior.

@@ -1,7 +1,8 @@
 #lang racket
 
 (require "config.rkt"
-         "http.rkt")
+         "http.rkt"
+         "game-data.rkt")
 
 (provide elemental-damage
          final-damage
@@ -130,40 +131,128 @@
                           (if (number? turns) turns "unknown"))
                   #f)))
 
-;; Pure, network-free heuristic for how winnable a fight is. Each factor is a
-;; 0..1 "safety" ratio centered on 0.5 for an even match, so a same-level,
-;; same-stat monster scores right around 0.5 rather than collapsing toward 0.
-;; We average the factors so an even matchup stays near the middle of the scale
-;; instead of being crushed by multiplying several sub-1 ratios together.
-;; Fields that are absent contribute a neutral 0.5 so missing data degrades
-;; gently instead of distorting the score.
+;; Live Artifacts combat is elemental only (attack_air/earth/fire/water +
+;; matching res_*). Generic attack/defense fields are absent on live payloads;
+;; treating missing generic stats as a neutral 0.5 previously marked hard
+;; monsters "safe" and unlocked suicide pulls (air dagger → red/green slime).
+
+(define combat-elements '(fire earth water air))
+
+(define (attack-key element)
+  (string->symbol (format "attack_~a" element)))
+
+(define (dmg-key element)
+  (string->symbol (format "dmg_~a" element)))
+
+(define (res-key element)
+  (string->symbol (format "res_~a" element)))
+
+(define (numeric-field value key [default 0])
+  (define v (field value key #f))
+  (if (number? v) v default))
+
+(define (has-elemental-attack? entity)
+  (for/or ([el combat-elements])
+    (> (numeric-field entity (attack-key el) 0) 0)))
+
+(define (has-elemental-res? entity)
+  (for/or ([el combat-elements])
+    (number? (field entity (res-key el) #f))))
+
+;; Starter weapons used when a character hash has weapon_slot but no attack_*
+;; yet (dry-run / partial fixtures). Values mirror GET /items effects.
+(define known-weapon-attack-stats
+  (hash "copper_dagger" (hasheq 'attack_air 6 'critical_strike 35)
+        "sticky_sword" (hasheq 'attack_earth 16 'critical_strike 5)
+        "sticky_dagger" (hasheq 'attack_air 12 'critical_strike 35)
+        "wooden_stick" (hasheq 'attack_earth 4)
+        "iron_sword" (hasheq 'attack_fire 10 'attack_earth 10)))
+
+(define (weapon-slot-code char)
+  (define raw (field char 'weapon_slot #f))
+  (cond [(symbol? raw) (symbol->string raw)]
+        [(string? raw) raw]
+        [else #f]))
+
+;; Merge known weapon effects into a char that lacks live attack_* fields so
+;; worn copper_dagger still scores as air damage.
+(define (enrich-char-attacks char)
+  (cond
+    [(has-elemental-attack? char) char]
+    [else
+     (define code (weapon-slot-code char))
+     (define stats (and code (hash-ref known-weapon-attack-stats code #f)))
+     (if (not stats)
+         char
+         (for/fold ([acc char])
+                   ([(k v) (in-hash stats)])
+           (if (number? (field acc k #f))
+               acc
+               (hash-set acc k v))))]))
+
+;; Per-turn expected damage across all elements after resist + crit.
+(define (total-outgoing-damage attacker defender)
+  (define global-dmg (numeric-field attacker 'dmg 0))
+  (define crit (numeric-field attacker 'critical_strike 0))
+  (for/sum ([el combat-elements])
+    (define base (numeric-field attacker (attack-key el) 0))
+    (cond
+      [(<= base 0) 0]
+      [else
+       (define elem-bonus (numeric-field attacker (dmg-key el) 0))
+       (define res (numeric-field defender (res-key el) 0))
+       (define raw (elemental-damage base global-dmg elem-bonus))
+       (define after-res (final-damage raw res))
+       (expected-critical-damage after-res crit)])))
+
+(define (elemental-data-present? char monster)
+  (or (has-elemental-attack? char)
+      (has-elemental-attack? monster)
+      (has-elemental-res? char)
+      (has-elemental-res? monster)))
+
+;; Pure, network-free heuristic for how winnable a fight is (0..1).
+;; Scores from elemental outgoing damage vs HP (turns-to-kill vs turns-to-die).
+;; Missing elemental data is dampened below the safe-win threshold — never a
+;; fake ~0.5 that unlocks hard monsters.
 (define (local-combat-score char monster)
-  (define char-level (field char 'level 1))
-  (define monster-level (field monster 'level 1))
+  (define fighter (enrich-char-attacks char))
+  (define char-level (numeric-field fighter 'level 1))
+  (define monster-level (numeric-field monster 'level 1))
   (define level-safety (/ (+ char-level 1) (+ char-level monster-level 1)))
 
-  (define char-max-hp (field char 'max_hp 0))
-  (define monster-hp (field monster 'hp 0))
+  (define char-max-hp (max 0 (numeric-field fighter 'max_hp
+                                           (numeric-field fighter 'hp 0))))
+  (define monster-hp (max 0 (numeric-field monster 'hp 0)))
   (define hp-safety
     (if (and (> char-max-hp 0) (> monster-hp 0))
         (/ (+ char-max-hp 1) (+ char-max-hp monster-hp 1))
-        0.5))
+        0.0))
 
-  (define char-attack (field char 'attack 0))
-  (define monster-defense (field monster 'defense 0))
-  (define attack-safety
-    (if (or (> char-attack 0) (> monster-defense 0))
-        (/ (+ char-attack 1) (+ char-attack monster-defense 1))
-        0.5))
-
-  (define char-defense (field char 'defense 0))
-  (define monster-attack (field monster 'attack 0))
-  (define defense-safety
-    (if (or (> char-defense 0) (> monster-attack 0))
-        (/ (+ char-defense monster-attack 1) (+ char-defense (* 2 monster-attack) 1))
-        0.5))
-
-  (/ (+ level-safety hp-safety attack-safety defense-safety) 4))
+  (cond
+    [(not (elemental-data-present? fighter monster))
+     ;; No attack_*/res_* on either side: level+hp only, capped below 0.5 so
+     ;; the planner will not treat the fight as "safe".
+     (min 0.45 (* 0.5 (+ level-safety hp-safety)))]
+    [else
+     (define player-dpt (total-outgoing-damage fighter monster))
+     (define monster-dpt (total-outgoing-damage monster fighter))
+     (cond
+       [(or (<= player-dpt 0) (<= monster-hp 0))
+        ;; Cannot deal elemental damage → near-unwinnable.
+        (min 0.2 (* 0.35 level-safety))]
+       [else
+        (define turns-to-kill (max 1.0 (/ monster-hp player-dpt)))
+        (define turns-to-die
+          (if (<= monster-dpt 0)
+              +inf.0
+              (max 1.0 (/ (max 1 char-max-hp) monster-dpt))))
+        (define fight-safety
+          (if (infinite? turns-to-die)
+              0.95
+              (/ turns-to-die (+ turns-to-die turns-to-kill))))
+        ;; Mild level blend among winnable fights; elemental margin dominates.
+        (+ (* 0.75 fight-safety) (* 0.25 level-safety))])]))
 
 ;; Known equipment name fragments, used only to surface a suggestion that the
 ;; bot might equip something from inventory before fighting. We don't have item
@@ -172,6 +261,22 @@
   '("sword" "axe" "bow" "staff" "wand" "spear" "dagger" "mace" "hammer" "club"))
 (define armor-keywords
   '("armor" "shield" "helmet" "boots" "pants" "legs" "body" "ring" "amulet"))
+
+(define (worn-equipment-code char slot)
+  (define key
+    (case slot
+      [(weapon) 'weapon_slot]
+      [(shield) 'shield_slot]
+      [(helmet) 'helmet_slot]
+      [(body_armor) 'body_armor_slot]
+      [(leg_armor) 'leg_armor_slot]
+      [(boots) 'boots_slot]
+      [(ring) 'ring1_slot]
+      [(amulet) 'amulet_slot]
+      [(bag) 'bag_slot]
+      [(utility) 'utility1_slot]
+      [else #f]))
+  (and key (field char key #f)))
 
 (define (suggest-equipment char monster)
   (define inv (field char 'inventory '()))
@@ -183,17 +288,28 @@
     (and code (for/or ([k keywords]) (regexp-match? (pregexp k) code))))
   (define found
     (for/fold ([acc #hasheq()]) ([slot (slots)])
+      (define code (code-of slot))
+      (define eq-slot
+        (and code
+             (or (and (matches? code weapon-keywords) (not (gather-tool? code))
+                      (or (equipment-slot-of code) 'weapon))
+                 (and (matches? code armor-keywords)
+                      (or (equipment-slot-of code) 'body_armor)))))
       (cond
-        [(and (hash-has-key? acc 'weapon) (hash-has-key? acc 'armor)) acc]
-        [(matches? (code-of slot) weapon-keywords)
-         (hash-set acc 'weapon (code-of slot))]
-        [(matches? (code-of slot) armor-keywords)
-         (hash-set acc 'armor (code-of slot))]
+        [eq-slot
+         (define worn (worn-equipment-code char eq-slot))
+         (define prev (hash-ref acc eq-slot #f))
+         (define upgrade?
+           (cond
+             [(and worn (same-item-code? code worn)) #f]
+             [(not worn) #t]
+             [else (better-gear? code worn)]))
+         (if (and upgrade?
+                  (or (not prev) (better-gear? code prev) (not worn)))
+             (hash-set acc eq-slot code)
+             acc)]
         [else acc])))
-  (if (and (not (hash-has-key? found 'weapon))
-           (not (hash-has-key? found 'armor)))
-      #f
-      found))
+  (if (hash-empty? found) #f found))
 
 ;; Combine the API simulation with local math. Prefer the API probability when
 ;; it answered; otherwise fall back to the heuristic. Equipment that could

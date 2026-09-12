@@ -30,7 +30,9 @@
          cooldown-jobs-from-characters
          suggested-loop-sleep
          run-bot-once
-         run-bot-loop)
+         run-bot-loop
+         api-error-wait-seconds
+         generic-error-wait-seconds)
 
 (define (character-data response)
   (cond
@@ -49,8 +51,20 @@
      (and (hash? map) (hash-ref map 'interactions #f))]
     [else #f]))
 
-(define (enrich-character char #:config [config (current-config)])
-  (define interactions (map-content-for-character char #:config config))
+(define (interactions-from-world world char)
+  (define m (map-at world
+                    (character-field char 'layer)
+                    (character-field char 'x)
+                    (character-field char 'y)))
+  (and (hash? m) (hash-ref m 'interactions #f)))
+
+(define (enrich-character char
+                          #:config [config (current-config)]
+                          #:world [world #f]
+                          #:live-map? [live-map? #t])
+  (define interactions
+    (or (interactions-from-world world char)
+        (and live-map? (map-content-for-character char #:config config))))
   (if interactions
       (hash-set char 'interactions interactions)
       char))
@@ -225,6 +239,87 @@
           (planned-action-reason plan))
   (flush-output))
 
+(define (inventory-top-codes char [n 3])
+  (define slots
+    (sort (filter (lambda (slot)
+                    (and (hash? slot) (positive? (hash-ref slot 'quantity 0))))
+                  (inventory-items char))
+          >
+          #:key (lambda (slot) (hash-ref slot 'quantity 0))))
+  (for/list ([slot (in-list slots)] [_ (in-range n)])
+    (format "~a×~a" (hash-ref slot 'code "?") (hash-ref slot 'quantity 0))))
+
+(define (worn-gear-summary char)
+  (define slots
+    '((weapon_slot weapon) (shield_slot shield) (helmet_slot helm)
+      (body_armor_slot body) (leg_armor_slot legs) (boots_slot boots)
+      (ring1_slot ring1) (ring2_slot ring2) (amulet_slot amulet)
+      (utility1_slot util1) (utility2_slot util2) (bag_slot bag)))
+  (define parts
+    (filter values
+            (for/list ([pair slots])
+              (define code (character-field char (car pair) #f))
+              (and code (non-empty-string? (format "~a" code))
+                   (format "~a=~a" (cadr pair) code)))))
+  (if (null? parts) "" (format " worn [~a]" (string-join parts " "))))
+
+(define (log-roster-snapshot characters)
+  (printf "roster:\n")
+  (for ([char characters] #:when (hash? char))
+    (define bag (inventory-top-codes char))
+    (printf "  ~a lv~a xp ~a/~a hp ~a/~a @~a,~a gold ~a bag ~a/~a cd ~as~a~a\n"
+            (character-field char 'name "?")
+            (character-field char 'level 0)
+            (character-field char 'xp 0)
+            (character-field char 'max_xp 0)
+            (character-field char 'hp 0)
+            (character-field char 'max_hp 0)
+            (character-field char 'x 0)
+            (character-field char 'y 0)
+            (character-field char 'gold 0)
+            (inventory-used char)
+            (character-field char 'inventory_max_items 0)
+            (cooldown-remaining char)
+            (if (null? bag) "" (format " [~a]" (string-join bag " ")))
+            (worn-gear-summary char)))
+  (flush-output))
+
+(define (bank-details-gold #:config [config (current-config)])
+  (with-handlers ([exn:fail? (lambda (_) #f)])
+    (define raw (get-bank-details #:config config))
+    (define data (character-data raw))
+    (and (hash? data) (hash-ref data 'gold #f))))
+
+;; Print vault stacks from the once-per-tick bank snapshot (same table restock
+;; uses). Caps the line length so a full bank stays readable. `#:gold` is the
+;; vault purse from GET /my/bank (separate from item stacks).
+(define (log-bank-snapshot table [limit 40] #:gold [gold #f])
+  (cond
+    [(not table)
+     (printf "bank: (unavailable)~a\n"
+             (if (number? gold) (format " gold ~a" gold) ""))]
+    [(zero? (hash-count table))
+     (printf "bank: empty~a\n"
+             (if (number? gold) (format " gold ~a" gold) ""))]
+    [else
+     (define rows
+       (sort (for/list ([(code qty) (in-hash table)])
+               (cons code qty))
+             >
+             #:key cdr))
+     (define shown (take rows (min limit (length rows))))
+     (printf "bank (~a stacks~a): ~a"
+             (hash-count table)
+             (if (number? gold) (format ", gold ~a" gold) "")
+             (string-join
+              (for/list ([row shown])
+                (format "~a×~a" (car row) (cdr row)))
+              " "))
+     (when (> (length rows) limit)
+       (printf " … +~a more" (- (length rows) limit)))
+     (printf "\n")])
+  (flush-output))
+
 (define (execute-planned-action name plan #:config [config (current-config)])
   (dispatch-action-name name
                         (planned-action-name plan)
@@ -318,6 +413,43 @@
                'x (hash-ref ge 'x 0)
                'y (hash-ref ge 'y 0))))
 
+(define (retry-after-seconds retry)
+  (cond
+    [(number? retry) retry]
+    [(string? retry) (string->number (string-trim retry))]
+    [else #f]))
+
+;; 429 is the Artifacts data/action bucket filling up, not a random outage.
+;; Honor Retry-After when present; otherwise wait ~20s instead of 2s.
+(define (api-error-wait-seconds err
+                                #:base-seconds [base 2]
+                                #:rate-limit-seconds [rl 20])
+  (define retry (retry-after-seconds (api-error-retry-after err)))
+  (cond
+    [(and retry (positive? retry)) (max retry base)]
+    [(or (equal? (api-error-code err) 429)
+         (equal? (api-error-status err) 429))
+     rl]
+    [else base]))
+
+(define (generic-error-wait-seconds msg
+                                    #:base-seconds [base 2]
+                                    #:rate-limit-seconds [rl 20])
+  (if (and (string? msg) (regexp-match? #px"\\b429\\b" msg))
+      rl
+      base))
+
+(define (stamp-bank-items characters table)
+  (define items (bank-items-from-qty-table table))
+  (for/list ([c characters])
+    (if (hash? c) (hash-set c 'bank_items items) c)))
+
+(define (with-bank-qty-table table thunk)
+  (if table
+      (parameterize ([bank-qty-lookup (lambda (want) (hash-ref table want 0))])
+        (thunk))
+      (thunk)))
+
 (define (run-bot-once bot
                       #:config [config (current-config)]
                       #:world [world #f]
@@ -330,67 +462,109 @@
   (define monsters (hash-ref encyclopedia* 'monsters '()))
   (define resources (hash-ref encyclopedia* 'resources '()))
   (define events (active-events-list #:config config #:dry-run? dry-run?))
-  (define my-chars
+  (define loaded
     (load-my-characters #:config config #:dry-run? dry-run? #:bot bot))
-  (define bot*
-    (if bind-account?
-        (bind-bot-to-account bot my-chars)
-        bot))
-  (run-strategy-tick bot* #:config config #:dry-run? dry-run?)
-  (define updated-chars my-chars)
-  (define (record-cooldown live-name result)
-    ;; Fold a live action's cooldown back into the shared character snapshot so
-    ;; the loop's sleep (via cooldown-jobs-from-characters) gates on the real
-    ;; next-ready time rather than the stale snapshot cooldown.
-    (set! updated-chars
-          (for/list ([c updated-chars])
-            (if (and (hash? c) (equal? (hash-ref c 'name #f) live-name))
-                (update-character-cooldown c result)
-                c))))
-  (define results
-    (for/list ([spec (bot-characters bot*)])
-      (define tag (symbol->string (character-spec-tag spec)))
-      (define live-name (character-spec-live-name spec))
-      (define label
-        (if (equal? tag live-name) tag (format "~a (~a)" tag live-name)))
-      (define role (character-spec-role spec))
-      (define live (find-character-by-name my-chars live-name))
-      (cond
-        [(not live)
-         (printf "[~a] missing on account; skipping.\n" label)
-         (list tag 'missing #f)]
-        [else
-         (define enriched
-           (if (and dry-run? (not (config-has-token? config)))
-               live
-               (enrich-character live #:config config)))
-         ;; Preferred goal actions are resolved against the live character so
-         ;; character-conditioned guards (when-low-hp, etc.) see real state.
-         (define preferred (goal-preferred-actions spec enriched))
-         (define plan
-           (plan-character enriched
-                          world*
-                          #:role role
-                          #:monsters monsters
-                          #:resources resources
-                          #:events events
-                          #:preferred preferred))
-         (cond
-           [(not plan)
-            (printf "[~a] waiting on cooldown or no plan.\n" label)
-            (list tag 'idle #f)]
-           [else
-            (log-decision label plan)
-            (define result
-              (if dry-run?
-                  #hasheq((dry_run . #t)
-                          (action . (symbol->string (planned-action-name plan)))
-                          (reason . (planned-action-reason plan)))
-                  (execute-planned-action live-name plan #:config config)))
-            ;; In dry-run the synthetic character carries no live response, so
-            ;; nothing changes; with a token we fold the action's cooldown in.
-            (unless dry-run? (record-cooldown live-name result))
-            (list tag 'acted result)])])))
+  (define bank-table
+    (and (not dry-run?)
+         (config-has-token? config)
+         (snapshot-bank-quantities #:config config)))
+  (define bank-gold
+    (and (not dry-run?)
+         (config-has-token? config)
+         (bank-details-gold #:config config)))
+  (define my-chars
+    (if (and bank-table (list? loaded))
+        (stamp-bank-items loaded bank-table)
+        loaded))
+  (define live-map?
+    (not (and dry-run? (not (config-has-token? config)))))
+  (define-values (results updated-chars)
+    (with-bank-qty-table
+     bank-table
+     (lambda ()
+       (log-roster-snapshot my-chars)
+       (log-bank-snapshot bank-table #:gold bank-gold)
+       (define bot*
+         (if bind-account?
+             (bind-bot-to-account bot my-chars)
+             bot))
+       (run-strategy-tick bot* #:config config #:dry-run? dry-run?)
+       (define updated my-chars)
+       (define (record-cooldown live-name result)
+         ;; Fold a live action's cooldown back into the shared character snapshot so
+         ;; the loop's sleep (via cooldown-jobs-from-characters) gates on the real
+         ;; next-ready time rather than the stale snapshot cooldown.
+         (set! updated
+               (for/list ([c updated])
+                 (if (and (hash? c) (equal? (hash-ref c 'name #f) live-name))
+                     (update-character-cooldown c result)
+                     c))))
+       (define tick-results
+         (for/list ([spec (bot-characters bot*)])
+           (define tag (symbol->string (character-spec-tag spec)))
+           (define live-name (character-spec-live-name spec))
+           (define label
+             (if (equal? tag live-name) tag (format "~a (~a)" tag live-name)))
+           (define role (character-spec-role spec))
+           (define live (find-character-by-name my-chars live-name))
+           (cond
+             [(not live)
+              (printf "[~a] missing on account; skipping.\n" label)
+              (list tag 'missing #f)]
+             [else
+              (define enriched
+                (enrich-character live
+                                  #:config config
+                                  #:world world*
+                                  #:live-map? live-map?))
+              ;; Preferred goal actions are resolved against the live character so
+              ;; character-conditioned guards (when-low-hp, etc.) see real state.
+              (define preferred (goal-preferred-actions spec enriched))
+              (define plan
+                (plan-character enriched
+                               world*
+                               #:role role
+                               #:monsters monsters
+                               #:resources resources
+                               #:events events
+                               #:preferred preferred))
+              (cond
+                [(not plan)
+                 (printf "[~a] waiting on cooldown or no plan.\n" label)
+                 (list tag 'idle #f)]
+                [else
+                 (log-decision label plan)
+                 (define result
+                   (cond
+                     [dry-run?
+                      #hasheq((dry_run . #t)
+                              (action . (symbol->string (planned-action-name plan)))
+                              (reason . (planned-action-reason plan)))]
+                     [else
+                      ;; Per-character catch so a failed gold withdraw names the
+                      ;; actor and does not abort the rest of the roster tick.
+                      (with-handlers
+                          ([exn:fail:artifacts-api?
+                            (lambda (exn)
+                              (define err (exn:fail:artifacts-api-error exn))
+                              (printf "[~a] API error ~a: ~a\n"
+                                      label
+                                      (api-error-code err)
+                                      (api-error-message err))
+                              (flush-output)
+                              #f)]
+                           [exn:fail?
+                            (lambda (exn)
+                              (printf "[~a] action error: ~a\n"
+                                      label
+                                      (exn-message exn))
+                              (flush-output)
+                              #f)])
+                        (execute-planned-action live-name plan #:config config))]))
+                 (when (and result (not dry-run?))
+                   (record-cooldown live-name result))
+                 (list tag (if result 'acted 'failed) result)])])))
+       (values tick-results updated))))
   (values results updated-chars))
 
 (define (cooldown-jobs-from-characters characters [now (current-seconds)])
@@ -457,16 +631,23 @@
         (with-handlers ([exn:fail:artifacts-api?
                          (lambda (exn)
                            (define err (exn:fail:artifacts-api-error exn))
+                           (define wait* (api-error-wait-seconds err #:base-seconds sleep-seconds))
                            (printf "API error ~a: ~a\n"
                                    (api-error-code err)
                                    (api-error-message err))
+                           (when (> wait* sleep-seconds)
+                             (printf "Backing off ~as (rate limit).\n" wait*))
                            (flush-output)
-                           sleep-seconds)]
+                           wait*)]
                         [exn:fail?
                          (lambda (exn)
-                           (printf "Runner error: ~a\n" (exn-message exn))
+                           (define msg (exn-message exn))
+                           (define wait* (generic-error-wait-seconds msg #:base-seconds sleep-seconds))
+                           (printf "Runner error: ~a\n" msg)
+                           (when (> wait* sleep-seconds)
+                             (printf "Backing off ~as (rate limit).\n" wait*))
                            (flush-output)
-                           sleep-seconds)])
+                           wait*)])
           (define-values (_tick-results chars)
             (run-bot-once bot
                           #:config config

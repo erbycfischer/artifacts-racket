@@ -11,7 +11,7 @@ A library (`artifacts/`) plus example bots (`examples/`) that let you describe *
 | Piece | Role |
 |-------|------|
 | `artifacts/` | Racket package: REST client, planner, runner, scheduler, `#lang artifacts` |
-| `examples/` | Headless bots (`apex-bot.rkt`, `starter-bot.rkt`, `workshop-bot.rkt`) |
+| `examples/` | Headless bots; flagship is `harmony-bot.rkt` (5-char shared-bank economy) |
 | `docs/` | Quickstart, API inventory, API map, architecture |
 
 ## Quick start
@@ -34,16 +34,22 @@ A library (`artifacts/`) plus example bots (`examples/`) that let you describe *
 4. **Dry-run first** (no token needed, no real actions) to confirm your bot compiles and the loop behaves:
 
    ```sh
-   ARTIFACTS_DRY_RUN=1 ARTIFACTS_ITERATIONS=3 racket examples/apex-bot.rkt
+   ARTIFACTS_DRY_RUN=1 ARTIFACTS_ITERATIONS=3 racket examples/harmony-bot.rkt
    ```
 
-5. Go live once your token is set:
+5. Go live once your token is set. Live `play` defaults to an infinite tick loop (`#:iterations +inf.0`), which looks like the process never finishes — cap a run with `ARTIFACTS_ITERATIONS`:
 
    ```sh
-   racket examples/apex-bot.rkt
+   ARTIFACTS_ITERATIONS=20 racket examples/harmony-bot.rkt
    ```
 
 With no token, bots still *compile* and `play` still runs a dry run; live HTTP actions return a structured `452` auth error.
+
+## Flagship: 5-character shared-bank economy
+
+[`examples/harmony-bot.rkt`](examples/harmony-bot.rkt) is the flagship: fighter, miner, woodcutter, smith, and trader (the account cap). They coordinate through the **account bank as a mailbox** — gatherers deposit mats; the smith withdraws and crafts; the fighter outfits from the vault; the trader lists excess on the Grand Exchange.
+
+Rare drops are banked and appended to `logs/rare-drops.ndjson`. They are **never auto-sold**.
 
 ## The shape of a bot
 
@@ -69,18 +75,57 @@ A bot is a roster of `character` forms (each with a `role` that steers the plann
 | Helper | What it does |
 |--------|--------------|
 | `mine-until-full` | Gather the role resource, bank when the bag nears capacity |
+| `gather-until` | Gather until the bag holds `qty` of a code, banking when full along the way |
+| `haul` | `mine-until-full` + `banker` — gather until full, bank, grow bank capacity |
 | `combat-loop` | Rest when HP drops to `ratio`, otherwise fight, bank when full |
+| `farm-xp` | Combat `auto-level`: grind toward `target`, then go dormant |
 | `bank-when-full` | Standalone "bank the moment the bag fills" guard |
 | `rest-when-low` | Standalone "rest while hurt" guard |
+| `heal-when-low` | Use a potion when HP drops to `ratio` of max |
+| `eat-when-low` | Same trigger, default cooked food |
+| `consume-buff` | Use `code` as soon as it lands in the bag |
 | `sell-surplus` | Sell `code` to an NPC, only while standing on the shop tile |
 | `craft-loop` | Craft `qty` of `code`, banking when the bag fills |
+| `production-chain` | `gather-until` each ingredient, then craft the product |
+| `craft-if-materials` | Craft only once every listed material is in the bag |
+| `recycle-junk` | Recycle listed codes at a workshop when held |
 | `ge-trade` | List `qty` of `code` on the Grand Exchange, only while on the exchange tile |
+| `snap-up` | Buy on the GE when the best ask is at or below `max-price` |
+| `withdraw-then-sell` | Withdraw from bank, then list on the GE |
+| `auto-level` | Grind toward `target` level via role skill, banking when full |
+| `trader-loop` | Scan GE, list a sell, bank when full; optional `#:fill-order-id` |
+| `banker` | Bank when full; buy a bank slot when the bank nears capacity |
+| `bank-gold` | Deposit gold when carried gold exceeds `threshold` |
+| `keep-gold` | Withdraw gold when carried gold falls below `floor` |
+| `stockpile` / `deposit-surplus` | Keep `n` of a code in the bag; deposit the rest at the bank |
+| `restock` | Withdraw from bank until the bag holds `n` of a code |
+| `gather-specific` | Gather a named resource, bank when the bag fills |
+| `hunt` | Fight a named monster, rest when hurt, bank when full |
+| `task-loop` | Complete / exchange / accept tasks at the task master |
+| `sell-all-on-ge` | Dump listed codes on the Grand Exchange |
+| `travel-to` | Walk to the nearest tile of a content type |
+| `auto-gear` | Equip the best weapon/armor currently in inventory |
+| `buy-kit` | Buy and equip a hash of slot → item-code at the items tile |
+| `grind` | Fight, sell or bank loot, upgrade gear — `#:bank-loot-codes` for shared vaults |
+| `ruthless-grind` | Best safe monster by level; bank classified loot (never auto-sell rares) |
+| `bank-classified-loot` | Deposit soft / premium / rare buckets into the shared vault |
+| `log-rare-drops` | Bank rares and append `logs/rare-drops.ndjson` |
+| `adaptive-gather` | Gather the resource the vault is short of for the role |
+| `spend-policy` / `procure-needs` / `bargain-consumables` / `flip-spread` / `snipe-valuables` / `sell-excess` | Trader auto-spend gold; craftable kit is never GE-bought; commodity snipes relist high; uniques hold/equip-review |
+| `bank-loot` | Deposit listed loot codes into the shared bank |
+| `outfit-from-bank` | Equip the best vault/bag piece per slot (rank-compared); rares log `equipped-for-review` |
+| `forge-loop` | Bank-backed refine + forge (bars, planks, starter gear) |
+| `workshop-loop` | Ordered multi-workshop craft (cooking through jewelry) |
+| `sell-products` | Withdraw goods from the bank and list them on the GE |
 
 **Goal conditions** (reactive guards) stay dormant until the world warrants action:
 
 - `(when-low-hp ratio action ...)` — run only while `hp/max_hp <= ratio`.
 - `(when-inventory-full action ...)` / `(when-inventory-full #:reserve n action ...)` — run only when the bag is full (minus `n` slots).
 - `(when-on-content type action ...)` — run only while standing on a tile of `type` (`"bank"`, `"npc"`, `"workshop"`, `"grand_exchange"`).
+- `(when-has-item code action ...)` / `(when-gold-above n action ...)` / `(when-gold-below n action ...)` — run only when the bag or purse matches.
+- `(when-hp-above ratio action ...)` / `(when-inventory-empty action ...)` — run only while HP or bag slots match.
+- `(when-on-map id action ...)` / `(when-below-level target action ...)` — run only on a map or while under a level target.
 
 Fight decisions use a [matchup scorer](artifacts/combat.rkt): `matchup-score` prefers the API `/simulation/fight` probability and falls back to a local heuristic; `best-safe-monster` in `artifacts/planner.rkt` then picks the safest reachable target.
 
@@ -111,7 +156,8 @@ racket bridge.rkt
 - [`docs/api-map.md`](docs/api-map.md) — every Artifacts MMO capability mapped to its Racket entry point.
 - [`docs/api-inventory.md`](docs/api-inventory.md) — the REST wrapper surface in `artifacts/http.rkt`.
 - [`docs/architecture.md`](docs/architecture.md) — bot stack and the two-repo split.
-- [`examples/`](examples/) — `apex-bot.rkt` (competitive multi-character roster), `workshop-bot.rkt`, `starter-bot.rkt`.
+- [`examples/`](examples/) — `harmony-bot.rkt` (flagship 5-char shared-bank economy), `everything-bot.rkt` (one-line helpers playbook), `apex-bot.rkt` (competitive multi-character roster), `workshop-bot.rkt`, `starter-bot.rkt`.
+- [`docs/multi-account-eval.md`](docs/multi-account-eval.md) — second-account / dual-token evaluation (not implemented; not recommended soon).
 
 ## Compliance
 

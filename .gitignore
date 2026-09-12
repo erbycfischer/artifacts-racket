@@ -12,3 +12,7 @@ compiled/
 # Local environment / secrets
 .env
 .env.local
+
+# Private competitive roster (framework is public; this bot is not)
+examples/harmony-bot.rkt
+harmony-bot-progress.md
