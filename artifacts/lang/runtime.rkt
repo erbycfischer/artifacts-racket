@@ -32,10 +32,33 @@
         play
         play-with-visualizer
         auto-login
+        known-action-names
+        when-low-hp
+        when-inventory-full
+        when-on-content
+        when-below-level
+        when-has-item
+        when-has-qty
+        when-gold-above
+        when-gold-below
+        when-hp-above
+        when-inventory-empty
+        when-on-map
         (all-from-out "./actions.rkt")
          (all-from-out "./helpers.rkt")
          (all-from-out "../dsl-forms.rkt")
-         (all-from-out "../core.rkt")
+         (except-out (all-from-out "../core.rkt")
+                     when-low-hp
+                     when-inventory-full
+                     when-on-content
+                     when-below-level
+                     when-has-item
+                     when-has-qty
+                     when-gold-above
+                     when-gold-below
+                     when-hp-above
+                     when-inventory-empty
+                     when-on-map)
          (all-from-out "../runner.rkt"))
 
 (define known-action-names
@@ -73,7 +96,14 @@
     delete-item
     change-skin
     active-events
-    raids))
+    raids
+    market-tick
+    deposit-surplus
+    deposit-gold-surplus
+    top-up-gold
+    restock
+    snap-up
+    auto-gear))
 
 (define (known-action? name)
   (and (symbol? name) (memq name known-action-names) #t))
@@ -128,12 +158,17 @@
     (provide name)
     (define name (make-bot-spec 'name (list form ...)))))
 
+;; `#:role 'woodcutting` already supplies a quoted symbol expression. Wrapping
+;; the pattern variable in another quote (`'role`) stored `(quote woodcutting)`
+;; in the character-spec, so `role-skill` / `case` never matched and every
+;; gatherer fell through to mining (and crafters to combat). Leave `role` bare
+;; so the user's quote evaluates once to the symbol.
 (define-syntax (character stx)
   (syntax-parse stx
     [(character tag #:role role #:as account-name form ...)
-     #'(make-character-spec 'tag 'role account-name (list form ...))]
+     #'(make-character-spec 'tag role account-name (list form ...))]
     [(character tag #:role role form ...)
-     #'(make-character-spec 'tag 'role #f (list form ...))]))
+     #'(make-character-spec 'tag role #f (list form ...))]))
 
 ;; Guard a body of action/goal forms behind a predicate. At decision time the
 ;; predicate is applied to the live character; only when it answers true do the
@@ -192,6 +227,43 @@
     [(_ target body ...)
      #'(guard-spec (lambda (char) (when-below-level char target)) (list body ...))]))
 
+(define-syntax (when-has-item stx)
+  (syntax-parse stx
+    [(_ code body ...)
+     #'(guard-spec (lambda (char) (when-has-item char code)) (list body ...))]))
+
+(define-syntax (when-has-qty stx)
+  (syntax-parse stx
+    [(_ code n body ...)
+     #'(guard-spec (lambda (char) (when-has-qty char code n)) (list body ...))]))
+
+(define-syntax (when-gold-above stx)
+  (syntax-parse stx
+    [(_ amount body ...)
+     #'(guard-spec (lambda (char) (when-gold-above char amount)) (list body ...))]))
+
+(define-syntax (when-gold-below stx)
+  (syntax-parse stx
+    [(_ amount body ...)
+     #'(guard-spec (lambda (char) (when-gold-below char amount)) (list body ...))]))
+
+(define-syntax (when-hp-above stx)
+  (syntax-parse stx
+    [(_ ratio body ...)
+     #'(guard-spec (lambda (char) (when-hp-above char ratio)) (list body ...))]))
+
+(define-syntax (when-inventory-empty stx)
+  (syntax-parse stx
+    [(_ #:reserve reserve body ...)
+     #'(guard-spec (lambda (char) (when-inventory-empty char reserve)) (list body ...))]
+    [(_ body ...)
+     #'(guard-spec (lambda (char) (when-inventory-empty char)) (list body ...))]))
+
+(define-syntax (when-on-map stx)
+  (syntax-parse stx
+    [(_ map-id body ...)
+     #'(guard-spec (lambda (char) (when-on-map char map-id)) (list body ...))]))
+
 (define (pipeline name . actions)
   (unless (symbol? name)
     (error 'pipeline "expected symbolic pipeline name, got ~v" name))
@@ -236,7 +308,8 @@
   (define raw (action-spec-payload spec))
   (case name
     [(gather rest transition task-new task-complete task-cancel task-exchange
-            bank-buy-expansion grand-exchange-orders active-events raids)
+            bank-buy-expansion grand-exchange-orders active-events raids
+            market-tick auto-gear)
      #f]
     [(fight equip unequip bank-deposit-item bank-withdraw-item)
      (if (null? raw) '() (car raw))]

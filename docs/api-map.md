@@ -12,34 +12,35 @@ Builders dispatch through `artifacts/dispatch.rkt` onto the `http.rkt` wrappers.
 
 | Capability | Racket wrapper (`http.rkt`) | `#lang artifacts` builder (`actions.rkt`) | Helper (`helpers.rkt`) |
 |-----------|------------------------------|-------------------------------------------|-------------------------|
-| Movement (move to x/y) | `action-move` | `move-to` | — |
+| Movement (move to x/y) | `action-move` | `move-to` | `travel-to` |
 | Movement (move to map id) | `action-move` | `move-to-map` | — |
 | Map transition | `action-transition` | `transition` | — |
 | Rest / recover HP | `action-rest` | `rest` | `rest-when-low` |
-| Equip item | `action-equip` | `equip` | — |
+| Equip item | `action-equip` | `equip` | `auto-gear`, `buy-kit`, `upgrade-gear` |
 | Unequip item | `action-unequip` | `unequip` | — |
-| Use consumable | `action-use` | `use-item` | — |
-| Gather (role resource) | `action-gather` | `gather` | `mine-until-full` |
-| Fight (+ matchup scoring) | `action-fight` | `fight` | `combat-loop` |
-| Craft | `action-craft` | `craft` | `craft-loop` |
-| Recycle | `action-recycle` | `recycle` | — |
-| Bank deposit item | `action-bank-deposit-item` | `deposit-all` | `mine-until-full`, `bank-when-full`, `craft-loop` |
-| Bank deposit gold | `action-bank-deposit-gold` | `deposit-gold` | — |
-| Bank withdraw item | `action-bank-withdraw-item` | `withdraw` | — |
-| Bank withdraw gold | `action-bank-withdraw-gold` | `withdraw-gold` | — |
-| Bank buy expansion | `action-bank-buy-expansion` | `buy-expansion` | — |
-| NPC buy | `action-npc-buy` | `buy` | `sell-surplus` (sell side) |
-| NPC sell | `action-npc-sell` | `sell` | `sell-surplus` |
+| Use consumable | `action-use` | `use-item` | `heal-when-low`, `consume-buff` |
+| Gather (role resource) | `action-gather` | `gather` | `mine-until-full`, `gather-loop`, `gather-specific`, `gather-until`, `haul` |
+| Fight (+ matchup scoring) | `action-fight` | `fight` | `combat-loop`, `hunt`, `farm-xp`, `grind`, `auto-level` |
+| Craft | `action-craft` | `craft` | `craft-loop`, `production-chain`, `craft-if-materials` |
+| Recycle | `action-recycle` | `recycle` | `recycle-junk` |
+| Bank deposit item | `action-bank-deposit-item` | `deposit-all` | `mine-until-full`, `bank-when-full`, `craft-loop`, `stockpile`, `deposit-surplus` |
+| Bank deposit surplus (keep N in bag) | `action-bank-deposit-item` | — | `stockpile`, `deposit-surplus` |
+| Bank deposit gold | `action-bank-deposit-gold` | `deposit-gold` | `bank-gold` |
+| Bank withdraw item | `action-bank-withdraw-item` | `withdraw` | `withdraw-then-sell`, `restock` |
+| Bank withdraw gold | `action-bank-withdraw-gold` | `withdraw-gold` | `keep-gold` |
+| Bank buy expansion | `action-bank-buy-expansion` | `buy-expansion` | `banker` |
+| NPC buy | `action-npc-buy` | `buy` | `buy-kit`, `upgrade-gear` |
+| NPC sell | `action-npc-sell` | `sell` | `sell-surplus`, `sell-loot` |
 | Grand Exchange buy (fill order) | `action-grand-exchange-buy` | `buy-on-ge` | — |
-| Grand Exchange create sell order | `action-grand-exchange-create-sell-order` | `sell-on-ge` | `ge-trade` |
-| Grand Exchange create buy order | `action-grand-exchange-create-buy-order` | `bid-on-ge` | — |
+| Grand Exchange create sell order | `action-grand-exchange-create-sell-order` | `sell-on-ge` | `ge-trade`, `sell-all-on-ge` |
+| Grand Exchange create buy order | `action-grand-exchange-create-buy-order` | `bid-on-ge` | `snap-up` |
 | Grand Exchange cancel order | `action-grand-exchange-cancel` | `cancel-order` | — |
 | Grand Exchange fill order | `action-grand-exchange-fill` | `fill-order` | — |
-| Task: new | `action-task-new` | `task-start` | — |
-| Task: complete | `action-task-complete` | `task-complete` | — |
+| Task: new | `action-task-new` | `task-start` | `task-loop` |
+| Task: complete | `action-task-complete` | `task-complete` | `task-loop` |
 | Task: cancel | `action-task-cancel` | `task-cancel` | — |
-| Task: exchange rewards | `action-task-exchange` | `task-exchange` | — |
-| Task: trade | `action-task-trade` | `task-trade` | — |
+| Task: exchange rewards | `action-task-exchange` | `task-exchange` | `task-loop` |
+| Task: trade | `action-task-trade` | `task-trade` | `task-loop` |
 | Give gold | `action-give-gold` | `give-gold` | — |
 | Give item | `action-give-item` | `give-item` | — |
 | Claim item | `action-claim-item` | `claim-item` | — |

@@ -5,20 +5,19 @@
          racket/set
          racket/file
          net/url
-         "../artifacts/config.rkt"
          "../artifacts/auth.rkt"
-         "../artifacts/http.rkt"
-         (except-in "../artifacts/lang/runtime.rkt" when-low-hp when-inventory-full when-on-content when-below-level)
-        "../artifacts/lang/helpers.rkt"
-        "../artifacts/lang/realtime.rkt"
-        "../artifacts/dsl-forms.rkt"
-         "../artifacts/market.rkt"
-         "../artifacts/scheduler.rkt"
-         "../artifacts/world.rkt"
+         ;; runtime re-exports core (incl. game-data) and helpers. Exclude the
+         ;; planner predicates so the direct planner require below owns them
+         ;; (avoids "already imported from a different source").
+         (except-in "../artifacts/lang/runtime.rkt"
+                    when-low-hp when-inventory-full when-on-content when-below-level
+                    when-has-item when-has-qty when-gold-above when-gold-below
+                    when-hp-above when-inventory-empty when-on-map)
          "../artifacts/planner.rkt"
-         "../artifacts/combat.rkt"
-         "../artifacts/runner.rkt"
-        (rename-in "../artifacts/lang/queries.rkt" [character q:character] [map q:map]))
+         "../artifacts/lang/realtime.rkt"
+         (rename-in "../artifacts/lang/queries.rkt"
+                    [character q:character]
+                    [map q:map]))
 
 (define test-config
   (artifacts-config "https://api.artifactsmmo.com/"
@@ -101,7 +100,9 @@
                                                                     (code . "chicken")))))))
     (define index (build-world-index (list start far near)))
     (check-equal? (hash-ref (nearest-content-map index start "monster" "chicken") 'map_id)
-                  "near"))
+                  "near")
+    (check-equal? (hash-ref (map-at index "main" 1 0) 'map_id) "near")
+    (check-false (map-at index "main" 9 9)))
 
   (test-case "market helpers score spreads"
     (define buys (list #hasheq((price . 9)) #hasheq((price . 12))))
@@ -244,13 +245,33 @@
                                  (interactions . #hasheq((content . #f))))
                          #hasheq((map_id . 2) (layer . "overworld") (x . 1) (y . 0)
                                  (interactions . #hasheq((content . #hasheq((type . "monster")
-                                                                             (code . "chicken")))))))))
+                                                                             (code . "chicken"))))))))
     (define plan (plan-character char world #:role 'combat #:monsters (list #hasheq((code . "chicken") (level . 1)))))
     (check-equal? (planned-action-name plan) 'rest)
     (define healthy (hash-set* char 'hp 90 'interactions #hasheq((content . #hasheq((type . "monster") (code . "chicken"))))))
     (define fight-plan (plan-character healthy world #:role 'combat #:monsters (list #hasheq((code . "chicken") (level . 1))
                                                                                     #hasheq((code . "boss") (level . 40)))))
-    (check-equal? (planned-action-name fight-plan) 'fight))
+    (check-equal? (planned-action-name fight-plan) 'fight)
+    ;; With preferred forms, author order wins even while critically hurt
+    ;; (no language-level restock-vs-rest policy).
+    (define world-with-bank
+      (build-world-index
+       (list #hasheq((map_id . 1) (layer . "overworld") (x . 0) (y . 0)
+                     (interactions . #hasheq((content . #f))))
+             #hasheq((map_id . 3) (layer . "overworld") (x . 2) (y . 0)
+                     (interactions . #hasheq((content . #hasheq((type . "bank")
+                                                                 (code . "bank")))))))))
+    (parameterize ([bank-qty-lookup (lambda (code)
+                                      (if (equal? (format "~a" code) "cooked_chicken") 5 0))])
+      (define bank-plan
+        (plan-character char world-with-bank
+                        #:role 'combat
+                        #:monsters (list #hasheq((code . "chicken") (level . 1)))
+                        #:preferred (list (action-spec 'restock
+                                                       (list (hasheq 'code "cooked_chicken" 'qty 3)))
+                                          (action-spec 'fight '()))))
+      (check-true (planned-action? bank-plan))
+      (check-true (memq (planned-action-name bank-plan) '(restock move)))))))
 
   (test-case "bind-bot-to-account maps roles onto live character names"
     (define bot
@@ -371,10 +392,10 @@
               (y . 0)
               (layer . "overworld")
               (map_id . 10)
-              (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "workshop")))))))
+              (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "mining")))))))
     (define world (build-world-index
                    (list #hasheq((map_id . 10) (layer . "overworld") (x . 0) (y . 0)
-                                 (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "workshop")))))))))
+                                 (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "mining")))))))))
     (define plan (plan-character char world
                                  #:role 'crafter
                                  #:preferred (list (craft 'copper_bar 1))))
@@ -474,6 +495,35 @@
     (check-true (cooldown-ready? #hasheq((cooldown . 0))))
     (check-false (cooldown-ready? #hasheq((cooldown . 3))))
 
+
+
+  (test-case "character macro stores a bare role symbol (not a double quote)"
+    ;; `#:role 'woodcutting` must become the symbol woodcutting inside the
+    ;; character-spec. A nested quote breaks role-skill and every gatherer
+    ;; silently falls back to mining.
+    (define wood (character woodcutter #:role 'woodcutting #:as "hrwood" (haul)))
+    (check-eq? (character-spec-role wood) 'woodcutting)
+    (check-eq? (character-spec-tag wood) 'woodcutter)
+    (define craft (character smith #:role 'crafter (forge-loop)))
+    (check-eq? (character-spec-role craft) 'crafter)
+    (check-eq? (role-skill (character-spec-role wood)) 'woodcutting))
+
+  (test-case "cooldown-remaining prefers parsed ISO expiration over stale cooldown"
+    ;; Live GET /characters/{name} returns ISO cooldown_expiration plus a
+    ;; relative cooldown that often never ticks down between polls. Absolute
+    ;; expiration must win so past expirations read as ready.
+    (define past #hasheq((cooldown . 58)
+                         (cooldown_expiration . "2026-08-20T14:10:22.034Z")))
+    (define future #hasheq((cooldown . 0)
+                           (cooldown_expiration . "2099-01-01T00:00:00Z")))
+    (check-true (cooldown-ready? past))
+    (check-equal? (cooldown-remaining past) 0)
+    (check-false (cooldown-ready? future))
+    (check-true (> (cooldown-remaining future) 0))
+    ;; No expiration still falls back to the relative field.
+    (check-false (cooldown-ready? #hasheq((cooldown . 3))))
+    (check-true (cooldown-ready? #hasheq((cooldown . 0)))))
+
   (test-case "cooldown-from-response extracts seconds from a live response"
     (define response
       #hasheq((data . #hasheq((name . "A")
@@ -533,6 +583,20 @@
     (define wait (suggested-loop-sleep chars #:base-seconds 2 #:min-seconds 1 #:max-seconds 15))
     (check-true (>= wait 2))
     (check-true (<= wait 15)))
+
+  (test-case "api-error-wait-seconds backs off on 429"
+    (define limited (api-error 429 429 "Too Many Requests" #hasheq() #f #f))
+    (check-equal? (api-error-wait-seconds limited #:base-seconds 2) 20)
+    (define retry (api-error 429 429 "Too Many Requests" #hasheq() "15" #f))
+    (check-equal? (api-error-wait-seconds retry #:base-seconds 2) 15)
+    (define other (api-error 498 498 "Character in cooldown" #hasheq() #f #f))
+    (check-equal? (api-error-wait-seconds other #:base-seconds 2) 2)
+    (check-equal? (generic-error-wait-seconds
+                   "GET failed: HTTP/1.1 429 Too Many Requests"
+                   #:base-seconds 2)
+                  20)
+    (check-equal? (generic-error-wait-seconds "connection reset" #:base-seconds 2)
+                  2))
 
   (test-case "keyword action builders produce correct specs"
     (define b (buy #:code 'copper_ore #:qty 5))
@@ -664,23 +728,40 @@
     (check-equal? (expand-guards (list direct) not-bank) '()))
 
   (test-case "local-combat-score favors an easier, lower-level monster"
-    (define char #hasheq((level . 5) (max_hp . 100) (attack . 20) (defense . 10)))
-    (define easy #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1)))
-    (define hard #hasheq((code . "dragon") (level . 40) (hp . 500) (attack . 80) (defense . 60)))
+    ;; Elemental fixtures (live API shape). Generic attack/defense are ignored.
+    (define char #hasheq((level . 5) (max_hp . 100)
+                         (attack_air . 20) (critical_strike . 0)
+                         (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
+    (define easy #hasheq((code . "chicken") (level . 1) (hp . 15)
+                         (attack_water . 3)
+                         (attack_fire . 0) (attack_earth . 0) (attack_air . 0)
+                         (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
+    (define hard #hasheq((code . "dragon") (level . 40) (hp . 500)
+                         (attack_fire . 80)
+                         (attack_earth . 0) (attack_water . 0) (attack_air . 0)
+                         (res_fire . 60) (res_earth . 0) (res_water . 0) (res_air . 0)))
     (define easy-score (local-combat-score char easy))
     (define hard-score (local-combat-score char hard))
     (check-true (number? easy-score))
     (check-true (number? hard-score))
     (check-true (> easy-score hard-score))
-    ;; A same-level match should sit near the middle of the 0..1 scale.
-    (define even #hasheq((code . "peer") (level . 5) (hp . 100) (attack . 20) (defense . 10)))
+    ;; Equal elemental stats + HP → fight-safety ≈ 0.5; blended near mid-scale.
+    (define even #hasheq((code . "peer") (level . 5) (hp . 100)
+                         (attack_air . 20)
+                         (attack_fire . 0) (attack_earth . 0) (attack_water . 0)
+                         (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
     (check-true (< (abs (- (local-combat-score char even) 0.5)) 0.25)))
 
   (test-case "matchup-score falls back to local math without a token"
     ;; A #f config fails before any request (no base-url), so simulate-fight-score
     ;; must absorb the error and degrade to local math rather than propagating it.
-    (define char #hasheq((level . 5) (max_hp . 100) (attack . 20) (defense . 10)))
-    (define monster #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1)))
+    (define char #hasheq((level . 5) (max_hp . 100)
+                         (attack_air . 20) (critical_strike . 0)
+                         (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
+    (define monster #hasheq((code . "chicken") (level . 1) (hp . 15)
+                            (attack_water . 3)
+                            (attack_fire . 0) (attack_earth . 0) (attack_air . 0)
+                            (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
     (define local-only (matchup-score char monster #:config #f))
     (check-equal? (hash-ref local-only 'source) 'local)
     (check-true (number? (hash-ref local-only 'score)))
@@ -701,18 +782,32 @@
     (define monster (hasheq 'code "chicken" 'level 1))
     (define equip (suggest-equipment char monster))
     (check-equal? (hash-ref equip 'weapon) "iron_sword")
-    (check-equal? (hash-ref equip 'armor) "wooden_armor")
+    ;; Armor keyword hits use a real API slot (body_armor), never the
+    ;; legacy catch-all 'armor key that jsexpr cannot POST.
+    (check-equal? (hash-ref equip 'body_armor) "wooden_armor")
     ;; No relevant gear -> no suggestion.
     (define ungeared (hasheq 'inventory (list (hasheq 'code "apple" 'quantity 5))))
-    (check-false (suggest-equipment ungeared monster)))
+    (check-false (suggest-equipment ungeared monster))
+    ;; Already wearing the bag piece → no re-equip suggestion (avoids API 422).
+    (define already
+      (hasheq 'inventory (list (hasheq 'code "copper_dagger" 'quantity 1))
+              'weapon_slot "copper_dagger"))
+    (check-false (suggest-equipment already monster)))
 
   (test-case "best-safe-monster skips unwinnable fights unless it's the only option"
+    ;; Air dagger (copper_dagger): attack_air 6. Live slime/chicken elemental
+    ;; shapes — green resists air and hits harder; chicken/yellow stay winnable.
     (define char #hasheq((name . "A")
                          (level . 3)
                          (max_hp . 100)
                          (hp . 100)
-                         (attack . 5)
-                         (defense . 5)
+                         (attack_air . 6)
+                         (critical_strike . 35)
+                         (weapon_slot . "copper_dagger")
+                         (res_fire . 0)
+                         (res_earth . 0)
+                         (res_water . 0)
+                         (res_air . 0)
                          (cooldown . 0)
                          (inventory_max_items . 20)
                          (inventory . ())
@@ -721,17 +816,37 @@
                          (layer . "overworld")
                          (map_id . 1)
                          (interactions . #hasheq((content . #f)))))
-    ;; With a #f config, scoring is local and level-based. A much higher-level
-    ;; monster scores below threshold, so the safe (level-1) one wins.
-    (define monsters
-      (list #hasheq((code . "chicken") (level . 1) (hp . 15) (attack . 3) (defense . 1))
-            #hasheq((code . "boss") (level . 40) (hp . 500) (attack . 80) (defense . 60))))
+    (define chicken
+      #hasheq((code . "chicken") (level . 1) (hp . 60)
+              (attack_water . 4) (attack_fire . 0) (attack_earth . 0) (attack_air . 0)
+              (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 0)))
+    (define boss
+      #hasheq((code . "boss") (level . 40) (hp . 500)
+              (attack_fire . 80) (attack_earth . 0) (attack_water . 0) (attack_air . 0)
+              (res_fire . 60) (res_earth . 0) (res_water . 0) (res_air . 0)))
+    ;; With a #f config, scoring is local. Hard elemental matchups fall below
+    ;; threshold, so the safe chicken wins over the boss.
+    (define monsters (list chicken boss))
     (define chosen (best-safe-monster char monsters #:config #f))
     (check-equal? (hash-ref chosen 'code) "chicken")
     ;; When the only candidate is hard, the planner still returns it rather
     ;; than leaving the bot with nothing to do.
-    (define only-hard (list #hasheq((code . "boss") (level . 40) (hp . 500) (attack . 80) (defense . 60))))
-    (check-equal? (hash-ref (best-safe-monster char only-hard #:config #f) 'code) "boss"))
+    (define only-hard (list boss))
+    (check-equal? (hash-ref (best-safe-monster char only-hard #:config #f) 'code) "boss")
+    ;; Among in-window fights, rank by win-probability — NOT raw monster level.
+    ;; Air dagger must prefer chicken (or yellow) over green_slime (air resist).
+    ;; NOTE (follow-up test agent): older suite expected green_slime under
+    ;; max-level bias + generic attack/defense; elemental safety flips that.
+    (define yellow
+      #hasheq((code . "yellow_slime") (level . 2) (hp . 70)
+              (attack_earth . 8) (attack_fire . 0) (attack_water . 0) (attack_air . 0)
+              (res_fire . 0) (res_earth . 25) (res_water . 0) (res_air . 0)))
+    (define green
+      #hasheq((code . "green_slime") (level . 4) (hp . 80)
+              (attack_air . 12) (attack_fire . 0) (attack_earth . 0) (attack_water . 0)
+              (res_fire . 0) (res_earth . 0) (res_water . 0) (res_air . 25)))
+    (define mix (list chicken yellow green))
+    (check-equal? (hash-ref (best-safe-monster char mix #:config #f) 'code) "chicken"))
 
   (test-case "mine-until-full builds a gather + bank-when-full goal"
     (define spec (mine-until-full #:resource 'copper_rocks))
@@ -1080,6 +1195,681 @@
     (check-equal? (length (goal-spec-actions nested)) 2)
     (check-true (guard? (cadr (goal-spec-actions nested)))))
 
+  (test-case "reactive predicates answer against a prepared character hash"
+    (define char
+      (hasheq 'hp 80 'max_hp 100 'gold 50 'map_id 3
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "copper_ore" 'quantity 4))))
+    (check-true (when-has-item char 'copper_ore))
+    (check-true (when-has-item char "copper_ore"))
+    (check-false (when-has-item char 'iron_ore))
+    (check-true (when-has-qty char 'copper_ore 4))
+    (check-false (when-has-qty char 'copper_ore 5))
+    (check-true (when-gold-above char 40))
+    (check-false (when-gold-above char 50))
+    (check-true (when-gold-below char 60))
+    (check-false (when-gold-below char 50))
+    (check-true (when-hp-above char 0.7))
+    (check-false (when-hp-above char 0.8))
+    (check-false (when-inventory-empty char))
+    (check-true (when-inventory-empty char 4))
+    (check-true (when-on-map char 3))
+    (check-false (when-on-map char 9))
+    (define empty (hasheq 'inventory_max_items 20 'inventory '()))
+    (check-true (when-inventory-empty empty)))
+
+  (test-case "every known-action-names entry routes in plan-preferred-action"
+    ;; Parity with the HTTP-wrapper test: a character goal naming any known
+    ;; action must produce a planned-action instead of falling through to #f.
+    (define world
+      (build-world-index
+       (list (hasheq 'map_id 1 'layer "overworld" 'x 0 'y 0
+                     'interactions (hasheq 'content #f))
+             (hasheq 'map_id 2 'layer "overworld" 'x 1 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank")))
+             (hasheq 'map_id 3 'layer "overworld" 'x 2 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "grand_exchange" 'code "ge")))
+             (hasheq 'map_id 4 'layer "overworld" 'x 3 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "workshop" 'code "ws")))
+             (hasheq 'map_id 5 'layer "overworld" 'x 4 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "npc" 'code "npc")))
+             (hasheq 'map_id 6 'layer "overworld" 'x 5 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "tasks_master" 'code "tm")))
+             (hasheq 'map_id 7 'layer "overworld" 'x 6 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "resource" 'code "copper_rocks")))
+             (hasheq 'map_id 8 'layer "overworld" 'x 7 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "monster" 'code "chicken")))
+             (hasheq 'map_id 9 'layer "overworld" 'x 8 'y 0
+                     'interactions (hasheq 'content (hasheq 'type "transition" 'code "door"))))))
+    (define monsters (list (hasheq 'code "chicken" 'level 1 'hp 15 'attack 3 'defense 1)))
+    (define resources (list (hasheq 'code "copper_rocks" 'level 1 'skill "mining")))
+    (define char
+      (hasheq 'name "alice" 'level 5 'hp 80 'max_hp 100 'gold 40 'cooldown 0
+              'mining_level 5 'inventory_max_items 20
+              'inventory (list (hasheq 'code "iron_sword" 'quantity 1)
+                               (hasheq 'code "copper_ore" 'quantity 5))
+              'x 0 'y 0 'layer "overworld" 'map_id 1
+              'interactions (hasheq 'content #f)))
+    (define (payload-for name)
+      (case name
+        [(use) (hasheq 'code "small_health_potion" 'quantity 1)]
+        [(bank-deposit-gold bank-withdraw-gold) 10]
+        [(bank-withdraw-item) (hasheq 'code "copper_ore" 'quantity 1)]
+        [(move) (hasheq 'type "bank")]
+        [(deposit-surplus) (hasheq 'code "copper_ore" 'keep 1)]
+        [(restock) (hasheq 'code "copper_ore" 'qty 50)]  ; > bag qty so plan still routes
+        [(snap-up) (hasheq 'code "copper_ore" 'max_price 10)]
+        [(give-gold) (hasheq 'name "bob" 'quantity 5)]
+        [(give-item) (hasheq 'name "bob" 'code "copper_ore" 'quantity 1)]
+        [(claim-item) 1]
+        [(delete-item) (hasheq 'code "copper_ore" 'quantity 1)]
+        [(change-skin) (hasheq 'skin "women3")]
+        [(grand-exchange-buy grand-exchange-cancel grand-exchange-fill)
+         (hasheq 'id 1 'quantity 1)]
+        [(grand-exchange-create-sell-order grand-exchange-create-buy-order)
+         (hasheq 'code "copper_ore" 'quantity 1 'price 10)]
+        [(task-trade) (hasheq 'code "monstertoken" 'quantity 1)]
+        [(craft recycle npc-buy npc-sell)
+         (hasheq 'code "copper_ore" 'quantity 1)]
+        [else #hasheq()]))
+    (for ([name known-action-names])
+      (define spec (action-spec name (list (payload-for name))))
+      (define plan (plan-preferred-action char world spec
+                                          #:role 'combat
+                                          #:monsters monsters
+                                          #:resources resources
+                                          #:events '()))
+      (check-pred planned-action? plan
+                  (format "plan-preferred-action should route ~a, got ~v" name plan))))
+
+  (test-case "heal-when-low and consume-buff fire only when their predicates hold"
+    (define heal (heal-when-low #:code 'small_health_potion #:ratio 0.5))
+    (check-true (guard? heal))
+    (check-equal? (action-spec-name (car (guard-spec-forms heal))) 'use)
+    (define pot (list (hasheq 'code "small_health_potion" 'quantity 1)))
+    (define hurt-with-pot (hasheq 'hp 30 'max_hp 100 'inventory pot))
+    (define hurt-empty (hasheq 'hp 30 'max_hp 100 'inventory (list)))
+    (define healthy (hasheq 'hp 90 'max_hp 100 'inventory pot))
+    ;; Hurt + potion in bag → use; hurt with empty bag stays dormant (rest/restock).
+    (check-equal? (length (expand-guards (list heal) hurt-with-pot)) 1)
+    (check-equal? (expand-guards (list heal) hurt-empty) '())
+    (check-equal? (expand-guards (list heal) healthy) '())
+    (define hp-code (heal-when-hp-code #:code 'small_health_potion #:threshold 40))
+    (check-true (guard? hp-code))
+    (check-equal? (length (expand-guards (list hp-code) hurt-empty)) 1)
+    (check-equal? (expand-guards (list hp-code) healthy) '())
+    (define buff (consume-buff #:code 'sunflower))
+    (define holding (hasheq 'inventory (list (hasheq 'code "sunflower" 'quantity 1))))
+    (define empty (hasheq 'inventory (list)))
+    (check-equal? (length (expand-guards (list buff) holding)) 1)
+    (check-equal? (expand-guards (list buff) empty) '()))
+
+  (test-case "gather-specific pins a resource code and banks when full"
+    (define spec (gather-specific #:resource 'copper_ore #:reserve 1))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'gather-specific)
+    (check-equal? (action-spec-name (car (goal-spec-actions spec))) 'gather)
+    (check-equal? (action-spec-payload (car (goal-spec-actions spec)))
+                  (list (hasheq 'code "copper_ore")))
+    (define roomy (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                          'inventory_max_items 20 'interactions (hasheq 'content #f)
+                          'inventory (list (hasheq 'code "copper_ore" 'quantity 2))))
+    (define miner-spec (character-spec 'demo 'mining #f (list spec)))
+    (check-equal? (map action-spec-name (goal-preferred-actions miner-spec roomy))
+                  '(gather)))
+
+  (test-case "gather-until stops once the bag holds the target quantity"
+    (define spec (gather-until #:resource 'copper_ore #:qty 5))
+    (check-true (guard? spec))
+    (define short (hasheq 'inventory (list (hasheq 'code "copper_ore" 'quantity 2))
+                          'inventory_max_items 20))
+    (define enough (hasheq 'inventory (list (hasheq 'code "copper_ore" 'quantity 5))
+                           'inventory_max_items 20))
+    (check-true (pair? (expand-guards (list spec) short)))
+    (check-equal? (expand-guards (list spec) enough) '()))
+
+  (test-case "recycle-junk and craft-if-materials gate on workshop / materials"
+    (define junk (recycle-junk #:codes '(ash copper_ore)))
+    (check-true (goal-spec? junk))
+    (define at-shop (hasheq 'interactions (hasheq 'content (hasheq 'type "workshop" 'code "ws"))
+                            'inventory (list (hasheq 'code "ash" 'quantity 2))))
+    (define away (hasheq 'interactions (hasheq 'content #f)
+                         'inventory (list (hasheq 'code "ash" 'quantity 2))))
+    (define junk-char (character-spec 'demo 'crafter #f (list junk)))
+    (check-equal? (map action-spec-name (goal-preferred-actions junk-char at-shop))
+                  '(recycle))
+    (check-equal? (goal-preferred-actions junk-char away) '())
+    (define craft (craft-if-materials #:code 'copper_bar #:qty 1
+                                      #:materials '((copper_ore 5))))
+    (check-true (guard? craft))
+    (define ready (hasheq 'inventory (list (hasheq 'code "copper_ore" 'quantity 5))))
+    (define missing (hasheq 'inventory (list (hasheq 'code "copper_ore" 'quantity 1))))
+    (check-equal? (action-spec-name (car (expand-guards (list craft) ready))) 'craft)
+    (check-equal? (expand-guards (list craft) missing) '()))
+
+  (test-case "production-chain gathers then crafts"
+    (define spec (production-chain #:chain '((copper_ore 5)) #:craft 'copper_bar))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'production-chain)
+    (define from-recipe (production-chain #:craft 'copper_bar))
+    (check-true (goal-spec? from-recipe)))
+
+  (test-case "hunt, farm-xp, and task-loop build the expected action names"
+    (define h (hunt #:code 'chicken #:max-hp-ratio 0.5))
+    (check-true (goal-spec? h))
+    (check-equal? (goal-spec-target h) 'hunt)
+    (define fight-spec (cadr (goal-spec-actions h)))
+    (check-equal? (action-spec-name fight-spec) 'fight)
+    (check-equal? (action-spec-payload fight-spec)
+                  (list (hasheq 'code "chicken")))
+    (define farm (farm-xp #:target 10))
+    (check-true (guard? farm))
+    (define leveled (hasheq 'level 10 'hp 90 'max_hp 100))
+    (define novice (hasheq 'level 3 'hp 90 'max_hp 100 'inventory '()
+                           'inventory_max_items 20 'interactions (hasheq 'content #f)))
+    (check-equal? (expand-guards (list farm) leveled) '())
+    (check-true (pair? (expand-guards (list farm) novice)))
+    (define tasks (task-loop))
+    (check-true (goal-spec? tasks))
+    (define at-master (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                              'inventory_max_items 20 'inventory '()
+                              'interactions (hasheq 'content (hasheq 'type "tasks_master" 'code "tm"))))
+    (define task-char (character-spec 'demo 'tasker #f (list tasks)))
+    (check-equal? (list->set (map action-spec-name (goal-preferred-actions task-char at-master)))
+                  (set 'task-complete 'task-exchange 'task-new)))
+
+  (test-case "market-logistics helpers expose GE and bank action names"
+    (define sell (sell-all-on-ge #:codes '(copper_ore coal) #:price 10))
+    (check-true (goal-spec? sell))
+    (define at-ge (hasheq 'hp 90 'max_hp 100 'cooldown 0 'gold 80
+                          'inventory_max_items 20 'inventory '()
+                          'interactions (hasheq 'content (hasheq 'type "grand_exchange" 'code "ge"))))
+    (define sell-char (character-spec 'demo 'trader #f (list sell)))
+    (check-equal? (map action-spec-name (goal-preferred-actions sell-char at-ge))
+                  '(grand-exchange-create-sell-order grand-exchange-create-sell-order))
+    (define wts (withdraw-then-sell #:code 'copper_ore #:qty 5 #:price 10))
+    (check-true (goal-spec? wts))
+    (define gold (bank-gold #:threshold 40))
+    (check-true (guard? gold))
+    (check-equal? (length (expand-guards (list gold) at-ge)) 1)
+    (check-equal? (action-spec-name (car (expand-guards (list gold) at-ge)))
+                  'deposit-gold-surplus)
+    (define poor (hash-set at-ge 'gold 10))
+    (check-equal? (expand-guards (list gold) poor) '())
+    (define dump (bank-gold #:keep 0))
+    (check-equal? (length (expand-guards (list dump) at-ge)) 1)
+    (define keep (keep-gold #:floor 20))
+    (check-equal? (length (expand-guards (list keep) poor)) 1)
+    (check-equal? (action-spec-name (car (expand-guards (list keep) poor)))
+                  'top-up-gold)
+    (check-equal? (expand-guards (list keep) at-ge) '())
+    (define pile (stockpile #:code 'copper_ore #:keep 2))
+    (check-true (goal-spec? pile))
+    (define at-bank (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                            'inventory_max_items 20 'inventory '()
+                            'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define pile-char (character-spec 'demo 'mining #f (list pile)))
+    (check-equal? (map action-spec-name (goal-preferred-actions pile-char at-bank))
+                  '(deposit-surplus))
+    (define rs (restock #:code 'copper_ore #:qty 5))
+    (define rs-char (character-spec 'demo 'mining #f (list rs)))
+    (check-equal? (map action-spec-name (goal-preferred-actions rs-char at-bank))
+                  '(restock))
+    (define snap (snap-up #:code 'copper_ore #:max-price 12))
+    (define snap-char (character-spec 'demo 'trader #f (list snap)))
+    (check-equal? (map action-spec-name (goal-preferred-actions snap-char at-ge))
+                  '(snap-up)))
+
+  (test-case "gear-travel helpers: auto-gear, buy-kit, travel-to"
+    (define gear (auto-gear))
+    (check-true (guard? gear))
+    (check-equal? (action-spec-name (car (guard-spec-forms gear))) 'auto-gear)
+    (define kit (buy-kit #:slots (hasheq 'weapon "iron_sword")))
+    (check-true (goal-spec? kit))
+    (define at-items (hasheq 'hp 90 'max_hp 100 'cooldown 0
+                             'inventory_max_items 20 'inventory '()
+                             'equipment #hasheq()
+                             'interactions (hasheq 'content (hasheq 'type "items" 'code "shop"))))
+    (define kit-char (character-spec 'demo 'combat #f (list kit)))
+    (check-equal? (list->set (map action-spec-name (goal-preferred-actions kit-char at-items)))
+                  (set 'npc-buy 'equip))
+    (define go (travel-to #:type "workshop"))
+    (check-true (goal-spec? go))
+    (define away (hasheq 'interactions (hasheq 'content #f)))
+    (define there (hasheq 'interactions (hasheq 'content (hasheq 'type "workshop" 'code "ws"))))
+    (define go-char (character-spec 'demo 'crafter #f (list go)))
+    (check-equal? (map action-spec-name (goal-preferred-actions go-char away)) '(move))
+    (check-equal? (goal-preferred-actions go-char there) '()))
+
+
+  (test-case "forge-loop restocks then crafts from default recipes"
+    (define spec (forge-loop #:recipes '(copper_bar) #:batch 2 #:junk '()))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'forge-loop)
+    (define names (map (lambda (f)
+                         (cond [(action-spec? f) (action-spec-name f)]
+                               [(guard-spec? f) 'guard]
+                               [(goal-spec? f) (goal-spec-target f)]
+                               [else 'other]))
+                       (goal-spec-actions spec)))
+    ;; restock is a qty/bank guard; craft-if-materials is a mats guard.
+    (check-not-false (member 'guard names)))
+
+  (test-case "workshop-loop cook-for-roster forge-kit-for adaptive-gather"
+    (define ws (workshop-loop #:junk '()))
+    (check-true (goal-spec? ws))
+    (check-equal? (goal-spec-target ws) 'workshop-loop)
+    (define cook (cook-for-roster #:recipes '(cooked_chicken) #:junk '()))
+    (check-true (goal-spec? cook))
+    (check-equal? (goal-spec-target cook) 'cook-for-roster)
+    (define kit (forge-kit-for #:level 1 #:next? #f))
+    (check-true (goal-spec? kit))
+    (check-equal? (goal-spec-target kit) 'forge-kit-for)
+    (define ag (adaptive-gather #:role 'mining))
+    (check-true (goal-spec? ag))
+    (check-equal? (goal-spec-target ag) 'adaptive-gather)
+    (check-true (pair? (goal-spec-actions ag))))
+
+  (test-case "mailbox-when-used and bank-crafted-products"
+    (define haul (mailbox-when-used #:qty 10))
+    (check-true (goal-spec? haul))
+    (check-equal? (goal-spec-target haul) 'mailbox-when-used)
+    (define products (bank-crafted-products #:codes '(cooked_chicken copper_dagger)))
+    (check-true (goal-spec? products))
+    (check-equal? (goal-spec-target products) 'bank-crafted-products)
+    (define holding
+      (hasheq 'hp 120 'max_hp 120 'cooldown 0
+              'inventory_max_items 100
+              'inventory (list (hasheq 'code "copper_ore" 'quantity 56))
+              'interactions (hasheq 'content #f)))
+    (define names
+      (map action-spec-name
+           (goal-preferred-actions
+            (character-spec 'demo 'mining #f (list haul))
+            holding)))
+    (check-not-false (member 'bank-deposit-item names)))
+
+  (test-case "smith pulls mailbox mats and fighter equips held kit"
+    (check-true (pair? mailbox-raw-codes))
+    (check-not-false (member 'copper_ore mailbox-raw-codes))
+    (define pull (fulfill-demand #:codes '(copper_ore ash_wood) #:qty 10))
+    (check-true (goal-spec? pull))
+    (check-equal? (goal-spec-target pull) 'fulfill-demand)
+    (define smith-char
+      (hasheq 'hp 100 'max_hp 100 'cooldown 0
+              'inventory_max_items 100 'inventory '()
+              'mining_level 1
+              'interactions (hasheq 'content #f)))
+    (parameterize ([bank-qty-lookup
+                    (lambda (want) (if (equal? want "copper_ore") 56 0))])
+      (define names
+        (map action-spec-name
+             (goal-preferred-actions
+              (character-spec 'demo 'crafter #f (list pull))
+              smith-char)))
+      (check-not-false (member 'restock names)))
+    (define geared
+      (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 6
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "copper_dagger" 'quantity 1))
+              'weapon_slot "wooden_stick"
+              'interactions (hasheq 'content #f)))
+    (define outfit (outfit-from-bank #:codes '(copper_dagger)))
+    (define equip-names
+      (map action-spec-name
+           (goal-preferred-actions
+            (character-spec 'demo 'combat #f (list outfit))
+            geared)))
+    (check-not-false (member 'equip equip-names)))
+
+  (test-case "sell-products expands withdraw-then-sell listings"
+    (define spec (sell-products #:listings '((copper_bar 5 40))))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'sell-products)
+    (check-true (hash-has-key? default-sell-prices 'copper_bar))
+    (check-true (pair? soft-loot-codes))
+    (check-true (pair? default-forge-recipes)))
+
+  (test-case "default game data is wired for grind and sell-loot"
+    (check-true (hash? default-gear-table))
+    (check-true (pair? default-loot-codes))
+    (check-true (hash-has-key? default-recipes 'copper_bar))
+    (check-true (pair? default-consumables))
+    (check-true (pair? fighter-kit-codes))
+    (check-true (pair? premium-loot-codes))
+    (check-true (pair? rare-loot-codes))
+    (check-true (soft-loot? 'raw_chicken))
+    (check-true (premium-loot? 'topaz_stone))
+    (check-true (rare-loot? 'golden_egg))
+    (check-equal? (classify-loot 'golden_egg) 'rare)
+    (check-equal? (classify-loot 'raw_chicken) 'soft)
+    (check-true (pair? forge-priority-queue))
+    (check-equal? (craft-workshop-skill 'copper_bar) 'mining)
+    (check-equal? (craft-workshop-skill 'copper_dagger) 'weaponcrafting)
+    (check-equal? (recipe-materials 'copper_bar) '((copper_ore 10)))
+    (check-equal? (recipe-materials 'copper_dagger) '((copper_bar 6)))
+    (check-equal? (item-craft-level 'copper_dagger) 1)
+    (check-equal? (item-craft-level 'king_slime_sword) 15)
+    (define spec (grind #:target 25))
+    (check-true (goal-spec? spec))
+    (define names
+      (map (lambda (form)
+             (cond
+               [(action-spec? form) (action-spec-name form)]
+               [(guard-spec? form) 'guard]
+               [else 'other]))
+           (goal-spec-actions spec)))
+    (check-not-false (member 'fight names)))
+
+  (test-case "bank-loot and outfit-from-bank build expected goals"
+    (define loot (bank-loot #:codes '(wolf_hide feather)))
+    (check-true (goal-spec? loot))
+    (check-equal? (goal-spec-target loot) 'bank-loot)
+    (define outfit (outfit-from-bank #:codes '(copper_dagger)))
+    (check-true (goal-spec? outfit))
+    (check-equal? (goal-spec-target outfit) 'outfit-from-bank)
+    (define banked (grind #:bank-loot-codes soft-loot-codes #:gear-table #hasheq()))
+    (check-true (goal-spec? banked))
+    (define holding
+      (hasheq 'hp 90 'max_hp 100 'cooldown 0
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "wolf_hide" 'quantity 2))
+              'equipment #hasheq()
+              'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define preferred (goal-preferred-actions
+                       (character-spec 'demo 'combat #f (list banked))
+                       holding))
+    (check-not-false (member 'deposit-surplus (map action-spec-name preferred)))
+    (check-not-false (member 'fight (map action-spec-name preferred))))
+
+  (test-case "ruthless-grind banks classified loot and still fights"
+    (define spec (ruthless-grind #:soft '(raw_chicken) #:premium '() #:rare '(golden_egg)))
+    (check-true (goal-spec? spec))
+    (check-equal? (goal-spec-target spec) 'ruthless-grind)
+    (define names
+      (map (lambda (form)
+             (cond
+               [(action-spec? form) (action-spec-name form)]
+               [(guard-spec? form) 'guard]
+               [else 'other]))
+           (goal-spec-actions spec)))
+    (check-not-false (member 'fight names))
+    (define holding
+      (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 1
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "raw_chicken" 'quantity 2))
+              'equipment #hasheq()
+              'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define preferred
+      (goal-preferred-actions
+       (character-spec 'demo 'combat #f (list spec))
+       holding))
+    (check-not-false (member 'fight (map action-spec-name preferred)))
+    (check-not-false (member 'deposit-surplus (map action-spec-name preferred)))
+    (define preferred-names (map action-spec-name preferred))
+    (check-true (< (index-of preferred-names 'deposit-surplus)
+                   (index-of preferred-names 'fight))))
+
+  (test-case "bank-classified-loot log-rare-drops and vault predicates"
+    (define classified (bank-classified-loot #:soft '(raw_chicken)
+                                             #:premium '(topaz_stone)
+                                             #:rare '(golden_egg)))
+    (check-true (goal-spec? classified))
+    (check-equal? (goal-spec-target classified) 'bank-classified-loot)
+    (define log-path (make-temporary-file "rare-drops-~a.ndjson"))
+    (parameterize ([rare-drops-log-file log-path])
+      (define logged (log-rare-drops #:codes '(golden_egg)))
+      (check-true (goal-spec? logged))
+      (check-equal? (goal-spec-target logged) 'log-rare-drops)
+      (define holding-rare
+        (hasheq 'name "fighter" 'hp 90 'max_hp 100 'cooldown 0
+                'inventory_max_items 20
+                'inventory (list (hasheq 'code "golden_egg" 'quantity 1))
+                'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+      (goal-preferred-actions
+       (character-spec 'demo 'combat #f (list logged))
+       holding-rare)
+      (check-true (file-exists? log-path)))
+    (define vaulted
+      (hasheq 'bank_items (list (hasheq 'code "copper_ore" 'quantity 8))))
+    (check-true (when-bank-has vaulted 'copper_ore))
+    (check-false (when-bank-has vaulted 'ash_wood))
+    (check-true (when-vault-short vaulted 'ash_wood 1))
+    (check-false (when-vault-short vaulted 'copper_ore 5)))
+
+  (test-case "trader spend-policy procure flip snipe sell-excess"
+    (define policy (spend-policy #:gold-floor 50))
+    (check-true (goal-spec? policy))
+    (check-equal? (goal-spec-target policy) 'spend-policy)
+    (check-true (number? (spend-max-price 'need 'copper_ore)))
+    (define need (procure-needs #:codes '(sunflower) #:rare rare-loot-codes #:deposit? #f))
+    (check-true (goal-spec? need))
+    (check-equal? (goal-spec-target need) 'procure-needs)
+    (define flip (flip-spread #:codes '(copper_bar) #:rare rare-loot-codes #:relist? #f))
+    (check-true (goal-spec? flip))
+    (check-equal? (goal-spec-target flip) 'flip-spread)
+    (define snipe (snipe-valuables #:codes '(ruby_stone) #:rare rare-loot-codes))
+    (check-true (goal-spec? snipe))
+    (check-equal? (goal-spec-target snipe) 'snipe-valuables)
+    (define excess (sell-excess #:listings '((cloth 5 40) (golden_egg 1 999))
+                                #:rare '(golden_egg)))
+    (check-true (goal-spec? excess))
+    (check-equal? (goal-spec-target excess) 'sell-excess)
+    (check-true (pair? (goal-spec-actions excess)))
+    (define eat (eat-when-low))
+    (check-true (guard? eat)))
+
+  (test-case "compounding: rank outfit, role tools, trader disposition"
+    (check-true (better-gear? 'copper_dagger 'wooden_stick))
+    (check-true (better-gear? 'iron_sword 'copper_dagger))
+    (check-false (better-gear? 'copper_dagger 'iron_sword))
+    (check-true (better-gear? 'highwayman_dagger 'copper_dagger))
+    (check-equal? (equipment-slot-of 'golden_egg) #f)
+    (check-true (craftable-gear? 'iron_sword))
+    (check-true (craftable-gear? 'copper_pickaxe))
+    (check-false (craftable-gear? 'lich_crown))
+    (check-false (craftable-gear? 'ruby_stone))
+    (check-false (member 'iron_sword default-snipe-codes))
+    (check-not-false (member 'copper_pickaxe
+                             (hash-ref default-workshop-by-skill 'weaponcrafting)))
+    (check-not-false (member 'satchel
+                             (hash-ref default-workshop-by-skill 'gearcrafting)))
+    (define (preferred spec char)
+      (map action-spec-name
+           (goal-preferred-actions
+            (character-spec 'demo 'combat #f (list spec))
+            char)))
+    (define (spec-codes spec)
+      (define acc '())
+      (define (walk x)
+        (cond
+          [(goal-spec? x) (for-each walk (goal-spec-actions x))]
+          [(guard-spec? x) (for-each walk (guard-spec-forms x))]
+          [(action-spec? x)
+           (define p (action-spec-payload x))
+           (define h (and (list? p) (pair? p) (hash? (car p)) (car p)))
+           (when (and h (hash-ref h 'code #f))
+             (set! acc (cons (hash-ref h 'code #f) acc)))]
+          [(list? x) (for-each walk x)]))
+      (walk spec)
+      acc)
+    (parameterize ([bank-qty-lookup
+                    (lambda (want) (if (equal? want "copper_dagger") 1 0))])
+      (define stick
+        (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 6
+                'inventory_max_items 20 'inventory '()
+                'weapon_slot "wooden_stick"
+                'interactions (hasheq 'content #f)))
+      (check-not-false (member 'restock (preferred (outfit-from-bank) stick))))
+    (parameterize ([bank-qty-lookup
+                    (lambda (want) (if (equal? want "iron_sword") 1 0))])
+      (define copper-worn
+        (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 10
+                'inventory_max_items 20 'inventory '()
+                'weapon_slot "copper_dagger"
+                'interactions (hasheq 'content #f)))
+      (check-not-false (member 'restock (preferred (outfit-from-bank) copper-worn))))
+    (parameterize ([bank-qty-lookup
+                    (lambda (want) (if (equal? want "copper_dagger") 1 0))])
+      (define iron-worn
+        (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 10
+                'inventory_max_items 20 'inventory '()
+                'weapon_slot "iron_sword"
+                'interactions (hasheq 'content #f)))
+      (check-false (member 'restock (preferred (outfit-from-bank) iron-worn)))
+      (check-false (member 'equip (preferred (outfit-from-bank) iron-worn))))
+    (define log-path (make-temporary-file "equip-review-~a.ndjson"))
+    (parameterize ([rare-drops-log-file log-path]
+                   [bank-qty-lookup (lambda (_want) 0)])
+      (define rare-geared
+        (hasheq 'name "fighter" 'hp 90 'max_hp 100 'cooldown 0 'level 6
+                'inventory_max_items 20
+                'inventory (list (hasheq 'code "highwayman_dagger" 'quantity 1))
+                'weapon_slot "copper_dagger"
+                'interactions (hasheq 'content #f)))
+      (check-not-false (member 'equip (preferred (outfit-from-bank) rare-geared)))
+      (check-true (file-exists? log-path))
+      (define logged (file->string log-path))
+      (check-true (regexp-match? #px"equipped-for-review" logged)))
+    (define egg-char
+      (hasheq 'hp 90 'max_hp 100 'cooldown 0 'level 6
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "golden_egg" 'quantity 1))
+              'weapon_slot "copper_dagger"
+              'interactions (hasheq 'content (hasheq 'type "bank" 'code "bank"))))
+    (define egg-actions (preferred (outfit-from-bank) egg-char))
+    (check-false (member 'equip egg-actions))
+    (define classified (bank-classified-loot #:soft '() #:premium '() #:rare '(golden_egg)))
+    (check-not-false (member 'deposit-surplus
+                             (preferred classified egg-char)))
+    (define miner-worn
+      (hasheq 'hp 100 'max_hp 100 'cooldown 0 'level 1 'mining_level 1
+              'inventory_max_items 20 'inventory '()
+              'weapon_slot "copper_pickaxe"
+              'interactions (hasheq 'content #f)))
+    (parameterize ([bank-qty-lookup
+                    (lambda (want) (if (equal? want "copper_pickaxe") 1 0))])
+      (define miner-names
+        (preferred (outfit-from-bank #:gear-table miner-kit-table) miner-worn))
+      (check-false (member 'restock miner-names))
+      (check-false (member 'equip miner-names)))
+    (define no-upgrade
+      (sell-excess #:listings '((iron_sword 1 140) (steel_battleaxe 1 200)
+                                (copper_pickaxe 1 80) (cloth 5 10)
+                                (highwayman_dagger 1 999))
+                   #:rare rare-loot-codes
+                   #:held '()))
+    (define no-upgrade-codes (spec-codes no-upgrade))
+    (check-false (member "iron_sword" no-upgrade-codes))
+    (check-false (member "steel_battleaxe" no-upgrade-codes))
+    (check-false (member "copper_pickaxe" no-upgrade-codes))
+    (check-false (member "highwayman_dagger" no-upgrade-codes))
+    (check-not-false (member "cloth" no-upgrade-codes))
+    (define dominated
+      (sell-excess #:listings '((copper_dagger 1 80) (iron_sword 1 140)
+                                (steel_battleaxe 1 200) (topaz_stone 5 40))
+                   #:rare rare-loot-codes
+                   #:held '(steel_battleaxe)))
+    (define dominated-codes (spec-codes dominated))
+    (check-not-false (member "copper_dagger" dominated-codes))
+    (check-false (member "steel_battleaxe" dominated-codes))
+    (check-not-false (member "topaz_stone" dominated-codes))
+    (define snipe (snipe-valuables #:codes '(iron_sword ruby_stone lich_crown)
+                                   #:rare rare-loot-codes))
+    (define snipe-codes (spec-codes snipe))
+    (check-false (member "iron_sword" snipe-codes))
+    (check-not-false (member "ruby_stone" snipe-codes))
+    (check-not-false (member "lich_crown" snipe-codes))
+    (check-equal? (snipe-disposition 'ruby_stone) 'flip)
+    (check-equal? (snipe-disposition 'lich_crown) 'equip-review)
+    (check-false (snipe-disposition 'iron_sword))
+    (define ruby-ask (flip-relist-price 'ruby_stone #:cost 40))
+    (check-true (and (number? ruby-ask) (> ruby-ask 40)))
+    (check-true (>= ruby-ask (or (hash-ref default-sell-prices 'ruby_stone #f) 0)))
+    (define no-kit (procure-needs #:rare rare-loot-codes #:deposit? #f))
+    (check-false (member "iron_sword" (spec-codes no-kit)))
+    (check-false (member "copper_dagger" (spec-codes no-kit)))
+    (check-true (number? (spend-max-price 'bargain 'small_health_potion)))
+    (check-true (< (spend-max-price 'bargain 'small_health_potion)
+                   (spend-max-price 'need 'small_health_potion)))
+    (define bargains (bargain-consumables))
+    (check-true (goal-spec? bargains))
+    (check-equal? (goal-spec-target bargains) 'bargain-consumables)
+    (define util (equip-utility))
+    (check-true (goal-spec? util))
+    (check-equal? (goal-spec-target util) 'equip-utility)
+    (define products (bank-crafted-products))
+    (define holding-pick
+      (hasheq 'hp 100 'max_hp 100 'cooldown 0
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "copper_pickaxe" 'quantity 1))
+              'interactions (hasheq 'content #f)))
+    (check-not-false (member 'deposit-surplus
+                             (preferred products holding-pick)))
+    ;; Default haul skips bars/planks so restock↔deposit cannot starve craft.
+    (define holding-bar
+      (hasheq 'hp 100 'max_hp 100 'cooldown 0
+              'inventory_max_items 20
+              'inventory (list (hasheq 'code "copper_bar" 'quantity 6))
+              'interactions (hasheq 'content #f)))
+    (check-false (member 'deposit-surplus
+                         (preferred (bank-crafted-products) holding-bar))))
+
+  (test-case "plan-craft routes to the matching workshop skill"
+    (define world
+      (build-world-index
+       (list #hasheq((map_id . "cook") (layer . "overworld") (x . 0) (y . 0)
+                     (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "cooking"))))))
+             #hasheq((map_id . "mine") (layer . "overworld") (x . 5) (y . 0)
+                     (interactions . #hasheq((content . #hasheq((type . "workshop") (code . "mining"))))))
+             #hasheq((map_id . "start") (layer . "overworld") (x . 1) (y . 0)
+                     (interactions . #hasheq((content . #f)))))))
+    (define char #hasheq((x . 1) (y . 0) (map_id . "start") (hp . 100) (max_hp . 100)
+                         (cooldown . 0) (inventory_max_items . 20) (inventory . ())
+                         (interactions . #hasheq((content . #f)))))
+    ;; Nearest untyped workshop is cooking at (0,0); copper_bar must go to mining.
+    (define nearest (nearest-typed-content world char "workshop"))
+    (check-equal? (hash-ref nearest 'map_id) "cook")
+    (define mining (nearest-typed-content world char "workshop" "mining"))
+    (check-equal? (hash-ref mining 'map_id) "mine")
+    (define plan
+      (plan-preferred-action char world
+                             (craft #:code 'copper_bar #:qty 1)
+                             #:role 'crafter))
+    (check-true (planned-action? plan))
+    (check-equal? (planned-action-name plan) 'move)
+    (check-equal? (hash-ref (planned-action-payload plan) 'map_id) "mine"))
+
+  (test-case "confirmed-empty restock does not path to the bank"
+    (define world
+      (build-world-index
+       (list #hasheq((map_id . "start") (layer . "overworld") (x . 0) (y . 0)
+                     (interactions . #hasheq((content . #f))))
+             #hasheq((map_id . "bank") (layer . "overworld") (x . 3) (y . 0)
+                     (interactions . #hasheq((content . #hasheq((type . "bank") (code . "bank")))))))))
+    (define char #hasheq((x . 0) (y . 0) (map_id . "start") (hp . 100) (max_hp . 100)
+                         (cooldown . 0) (inventory_max_items . 20) (inventory . ())
+                         (interactions . #hasheq((content . #f)))))
+    (parameterize ([bank-qty-lookup (lambda (_code) 0)])
+      (define plan
+        (plan-preferred-action char world
+                               (action-spec 'restock
+                                            (list (hasheq 'code "copper_ore" 'qty 10)))
+                               #:role 'crafter))
+      (check-false plan)))
+
+  (test-case "bank_items snapshot feeds vault guards without HTTP"
+    (define table (make-hash))
+    (hash-set! table "copper_ore" 56)
+    (hash-set! table "cooked_chicken" 9)
+    (define char (hasheq 'bank_items (bank-items-from-qty-table table)
+                         'inventory '()))
+    (check-true (when-bank-has char "copper_ore"))
+    (check-false (when-bank-has char "iron_ore"))
+    (parameterize ([bank-qty-lookup (lambda (want) (hash-ref table want 0))])
+      (check-equal? (bank-item-quantity "cooked_chicken") 9)
+      (check-equal? (bank-item-quantity "missing_item") 0)))
+
   ;; ---- Dry-run black-box: full framework run without any credentials ----
   ;; These two cases prove the runner executes a bot end-to-end with no token
   ;; and no network. We feed an explicit world/encyclopedia (and prime the
@@ -1141,6 +1931,17 @@
     ;; the live account in dry-run.
     (check-equal? (map (lambda (c) (hash-ref c 'name)) my-chars)
                   '("miner" "fighter")))
+
+  (test-case "enrich-character reads tile content from the world index"
+    (define char #hasheq((name . "miner")
+                         (layer . "overworld")
+                         (x . 2)
+                         (y . 0)
+                         (interactions . #hasheq((content . #f)))))
+    (define enriched
+      (enrich-character char #:world dry-run-world #:live-map? #f))
+    (check-equal? (hash-ref (hash-ref (hash-ref enriched 'interactions) 'content) 'code)
+                  "copper_rocks"))
 
   (test-case "strategy flattens helper goal-specs and plain actions"
     ;; A strategy may hold plain actions alongside high-level helpers that return

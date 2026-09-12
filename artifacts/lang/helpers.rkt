@@ -12,7 +12,14 @@
 
 (require "../dsl-forms.rkt"
          "../planner.rkt"
-         "./actions.rkt")
+         "../game-data.rkt"
+         "./actions.rkt"
+         "./helpers/consumables.rkt"
+         "./helpers/production.rkt"
+         "./helpers/combat-tasks.rkt"
+         "./helpers/market-logistics.rkt"
+         "./helpers/gear-travel.rkt"
+         "./helpers/logistics.rkt")
 
 (provide mine-until-full
          combat-loop
@@ -32,7 +39,14 @@
          haul
          market-maker
          has-loot?
-         equipped?)
+         equipped?
+         (all-from-out "../game-data.rkt")
+         (all-from-out "./helpers/consumables.rkt")
+         (all-from-out "./helpers/production.rkt")
+         (all-from-out "./helpers/combat-tasks.rkt")
+         (all-from-out "./helpers/market-logistics.rkt")
+         (all-from-out "./helpers/gear-travel.rkt")
+         (all-from-out "./helpers/logistics.rkt"))
 
 ;; Gather the character's role resource, then bank everything the moment the
 ;; bag is within `reserve` slots of capacity. #:resource names the target for
@@ -188,24 +202,28 @@
                                (list (action-spec 'market-tick #f))))))
 
 ;; True when the character's inventory holds at least one stack of `code` with a
-;; positive quantity. Mirrors the grinder-bot's local check so it can live in the
-;; shared layer.
+;; positive quantity. Uses the shared when-has-item predicate so symbol and
+;; string codes both match the API's string item codes.
 (define (has-loot? char code)
-  (define inv (character-field char 'inventory '()))
-  (and (list? inv)
-       (for/or ([slot (in-list inv)])
-         (and (hash? slot)
-              (equal? (hash-ref slot 'code #f) code)
-              (> (hash-ref slot 'quantity 0) 0)))))
+  (when-has-item char code))
 
-;; True when an item with `code` is equipped in any slot. Tolerant of ring1/ring2
-;; style slot keys, so a re-buy is avoided even if the API names the slot
-;; differently from the upgrade table.
+;; True when an item with `code` is equipped in any slot. Live API uses
+;; `weapon_slot` / `helmet_slot` / …; tests may use an `equipment` hash.
+(define character-equipment-slot-keys
+  '(weapon_slot shield_slot helmet_slot body_armor_slot leg_armor_slot
+    boots_slot ring1_slot ring2_slot amulet_slot
+    artifact1_slot artifact2_slot artifact3_slot
+    utility1_slot utility2_slot bag_slot rune_slot))
+
 (define (equipped? char code)
   (define eq (character-field char 'equipment #hasheq()))
-  (and (hash? eq)
-       (for/or ([(_ item) (in-hash eq)])
-         (and (hash? item) (equal? (hash-ref item 'code #f) code)))))
+  (or (and (hash? eq)
+           (for/or ([(_ item) (in-hash eq)])
+             (cond
+               [(hash? item) (item-code=? (hash-ref item 'code #f) code)]
+               [else (item-code=? item code)])))
+      (for/or ([key character-equipment-slot-keys])
+        (item-code=? (character-field char key #f) code))))
 
 ;; Liquidate the whole held quantity of each given loot code to the NPC. Fires
 ;; only while standing on the items shop tile (the planner routes there when the
@@ -256,28 +274,39 @@
              (list (guard-spec (lambda (char) (when-on-content char "items"))
                                guards))))
 
-;; The canonical "fight the best safe monster, sell the loot, buy better gear,
-;; repeat" loop as a single composable goal. It reads as intent: rest when hurt
-;; and fight the best monster, then sell held loot and upgrade toward the next
-;; gear tier — all gated by their own tile/level/inventory guards. `#:loot-codes`
-;; names the drops to liquidate; `#:gear-table` is the level-bucketed gear hash.
-;; Because expand-guards reverses body order when resolving, listing combat-loop
-;; last puts `fight` first in the preferred list so the bot grinds first and
-;; falls through to selling/buying when nothing is fightable:
+;; The canonical "fight the best safe monster, sell/bank the loot, buy better
+;; gear, repeat" loop as a single composable goal. It reads as intent: rest when
+;; hurt and fight the best monster, then sell or bank held loot and upgrade
+;; toward the next gear tier — all gated by their own tile/level/inventory
+;; guards. `#:loot-codes` names drops to NPC-sell; `#:bank-loot-codes` deposits
+;; those codes into the shared vault instead (harmony loop). `#:gear-table` is
+;; the level-bucketed gear hash. Because expand-guards reverses body order when
+;; resolving, listing combat-loop last puts `fight` first in the preferred list
+;; so the bot grinds first and falls through to selling/buying when nothing is
+;; fightable:
 ;;
 ;;   (grind #:target 25 #:max-hp-ratio 0.5
 ;;          #:loot-codes '(wolf_hide wolf_meat ...)
 ;;          #:gear-table gear-by-level)
+;;   (grind #:bank-loot-codes soft-loot-codes #:gear-table #hasheq())
+;;
+;; `#:target` is accepted for bot readability; combat level caps belong on
+;; auto-level / farm-xp. We do not wrap this whole goal in when-below-level
+;; because that would hide `(fight)` behind a guard in goal-spec-actions.
 (define (grind #:target [target +inf.0]
                #:max-hp-ratio [ratio 0.5]
-               #:loot-codes [loot-codes '()]
-               #:gear-table [gear-table #hasheq()])
-  ;; Flatten nested goal-specs into one goal body so grind reads as a single
-  ;; goal (each part is itself a goal-spec). When-on-content / level / equipped
-  ;; guards inside each part still resolve against the live character per tick.
-  (define loot (if (pair? loot-codes)
-                   (goal-spec-actions (sell-loot #:codes loot-codes))
-                   '()))
+               #:loot-codes [loot-codes default-loot-codes]
+               #:bank-loot-codes [bank-loot-codes #f]
+               #:gear-table [gear-table default-gear-table])
+  ;; Flatten sell/bank loot, upgrade-gear, and combat-loop legs into one body so
+  ;; `(fight)` sits beside the loot/gear guards, not nested inside combat-loop.
+  (define loot
+    (cond
+      [(pair? bank-loot-codes)
+       (goal-spec-actions (bank-loot #:codes bank-loot-codes))]
+      [(pair? loot-codes)
+       (goal-spec-actions (sell-loot #:codes loot-codes))]
+      [else '()]))
   (define gear (if (and (hash? gear-table) (not (hash-empty? gear-table)))
                    (goal-spec-actions (upgrade-gear #:by-level gear-table))
                    '()))

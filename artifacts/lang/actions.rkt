@@ -135,9 +135,22 @@
 
 (define (transition) (action-spec 'transition '()))
 
-(define (equip . slots) (action-spec 'equip (list slots)))
+(define (equip . args)
+  ;; Prefer `{code, slot}` hashes (API shape). Bare item codes are fine —
+  ;; dispatch fills the slot via equipment-slot-of before POSTing.
+  (action-spec 'equip
+               (for/list ([a args])
+                 (cond
+                   [(hash? a) a]
+                   [else (hasheq 'code (item-code a))]))))
 
-(define (unequip . slots) (action-spec 'unequip (list slots)))
+(define (unequip . args)
+  (action-spec 'unequip
+               (for/list ([a args])
+                 (cond
+                   [(hash? a) a]
+                   ;; Bare string/symbol treated as a slot name (legacy).
+                   [else (hasheq 'slot (item-code a))]))))
 
 (define (task-start) (action-spec 'task-new '()))
 

@@ -3,7 +3,8 @@
 (provide (struct-out world-index)
          build-world-index
          maps-with-content
-         nearest-content-map)
+         nearest-content-map
+         map-at)
 
 (struct world-index (maps by-id by-layer by-content) #:transparent)
 
@@ -58,6 +59,16 @@
 
 (define (maps-with-content index type code)
   (hash-ref/list (world-index-by-content index) (cons type code)))
+
+;; Live GET /maps/{layer}/{x}/{y} is a data-bucket hit; the encyclopedia
+;; world index already has the same static tile. Misses (events, unknown
+;; coords) return #f so the runner can fall back to a live fetch.
+(define (map-at index layer x y)
+  (and (world-index? index) layer
+       (for/or ([m (in-list (hash-ref/list (world-index-by-layer index) layer))])
+         (and (equal? (map-field m 'x) x)
+              (equal? (map-field m 'y) y)
+              m))))
 
 (define (manhattan-distance from to)
   (+ (abs (- (map-field from 'x) (map-field to 'x)))
